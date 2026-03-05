@@ -72,5 +72,3 @@ dist
 # Zip files
 *.zip
 
-# Transcription backend folder
-DRAITranscription/
