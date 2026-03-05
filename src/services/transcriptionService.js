@@ -1,6 +1,6 @@
 import { io } from 'socket.io-client';
 
-const TRANSCRIPTION_API_URL = import.meta.env.VITE_TRANSCRIPTION_API_URL || 'http://localhost:5001';
+const TRANSCRIPTION_API_URL = import.meta.env.VITE_TRANSCRIPTION_API_URL || 'http://localhost:5000';
 
 class TranscriptionService {
   constructor() {
