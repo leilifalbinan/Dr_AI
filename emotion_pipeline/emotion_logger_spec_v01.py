@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from collections import Counter
 from typing import Iterable, Optional, Mapping, Any
 import time
@@ -12,6 +12,8 @@ class EmotionVisitLogger:
     Writes to: runs/visit_<visit_id>/face.jsonl
     Format: JSONL (one JSON object per line)
     Time: Relative to visit start (seconds)
+    
+    ORCHESTRATOR SUPPORT: Can accept custom t_start and t_end for orchestrator mode
     """
     
     def __init__(
@@ -43,9 +45,6 @@ class EmotionVisitLogger:
         # Set up runs directory
         self.runs_dir = Path(runs_dir)
         self.runs_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Track visit start time for relative timing
-        self.visit_start_time = None
 
     def log_visit(
             self,
@@ -55,6 +54,8 @@ class EmotionVisitLogger:
             visit_time: Optional[str] = None,
             meta: Optional[Mapping[str, Any]] = None,
             visit_duration: Optional[float] = None,
+            t_start: Optional[float] = None,  # NEW: For orchestrator mode
+            t_end: Optional[float] = None,    # NEW: For orchestrator mode
     ):
         """
         Log a single visit summary (type="summary") per Doctor AI spec v0.1.
@@ -68,13 +69,15 @@ class EmotionVisitLogger:
             visit_time: ISO timestamp (optional, for reference)
             meta: dict with patient_id and other metadata
             visit_duration: total visit duration in seconds (optional)
+            t_start: custom start time relative to t0 (for orchestrator mode)
+            t_end: custom end time relative to t0 (for orchestrator mode)
         """
         if total_samples <= 0:
             print("[WARN] No samples to log for this visit")
             return
         
         if visit_time is None:
-            visit_time = datetime.now().isoformat(timespec="seconds")
+            visit_time = datetime.now(timezone.utc).isoformat(timespec="seconds")
         if visit_id is None:
             visit_id = visit_time.replace(":", "-")
         
@@ -93,9 +96,18 @@ class EmotionVisitLogger:
             lowercase_key = self.emotion_key_map[emo]
             count = int(emotion_counts[emo])
             pct = round((count / total_samples) * 100.0, 2)
-            
             emotion_counts_dict[lowercase_key] = count
             emotion_pct_dict[lowercase_key] = pct
+        
+        # Determine t_start and t_end
+        # If custom times provided (orchestrator mode), use them
+        # Otherwise use default (standalone mode)
+        if t_start is not None and t_end is not None:
+            log_t_start = t_start
+            log_t_end = t_end
+        else:
+            log_t_start = 0.0
+            log_t_end = visit_duration if visit_duration is not None else None
         
         # Build the spec-compliant record (type="summary")
         record = {
@@ -106,15 +118,16 @@ class EmotionVisitLogger:
             "phase": "encounter",  # Face emotion is captured during encounter
             "type": "summary",     # Visit-level summary
             
-            # Time fields (relative to visit start)
-            "t_start": 0.0,  # Visit started at t=0
-            "t_end": visit_duration if visit_duration else None,  # Total duration or null
+            # Time fields (relative to visit start or orchestrator t0)
+            "t_start": log_t_start,
+            "t_end": log_t_end,
             
             # Subsystem-specific features
             "features": {
                 "total_samples": int(total_samples),
                 "emotion_counts": emotion_counts_dict,
                 "emotion_pct": emotion_pct_dict,
+                "pct_scale": "0-100",  # Percentages are on 0-100 scale
                 # Optional: include raw timestamp for reference
                 "timestamp": visit_time,
                 "visit_label": meta.get("visit_label", ""),
@@ -140,8 +153,8 @@ class EmotionVisitLogger:
         if face_jsonl_path.exists():
             print(f"[WARN] {face_jsonl_path} already exists, appending anyway")
         
-        # Append the record (JSONL = one JSON per line)
-        with face_jsonl_path.open("w", encoding="utf-8") as f:           # Write mode since we only log one summary per visit
+        # Summary-only mode: overwrite for deterministic output
+        with face_jsonl_path.open("w", encoding="utf-8") as f:
             json.dump(record, f, ensure_ascii=False)
             f.write("\n")  # JSONL requires newline
         
@@ -149,6 +162,6 @@ class EmotionVisitLogger:
         print(f"     Visit ID: {visit_id}")
         print(f"     Patient: {patient_id}")
         print(f"     Samples: {total_samples}")
-        print(f"     Duration: {visit_duration if visit_duration else 'unknown'}s")
+        print(f"     Times: t_start={log_t_start:.2f}s, t_end={log_t_end if log_t_end is not None else 'null'}s")
         dominant = max(emotion_counts, key=emotion_counts.get)
         print(f"     Dominant: {dominant} ({emotion_pct_dict[self.emotion_key_map[dominant]]:.1f}%)")

@@ -16,7 +16,7 @@ import time
 import mediapipe as mp
 import torch.nn.functional as F
 from collections import deque, Counter
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from emotion_logger_spec_v01_ORCHESTRATOR import EmotionVisitLogger
 import statistics
@@ -28,6 +28,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 from common_utils.orchestrator_utils import update_manifest_status  
+
 # ==========================
 # CONFIG
 # ==========================
@@ -127,15 +128,15 @@ def get_visit_t0(visit_dir: Path) -> tuple[float, bool]:
         try:
             with open(manifest_path, 'r', encoding='utf-8') as f:
                 manifest = json.load(f)
-                t0_str = manifest.get('created_utc')
+            t0_str = manifest.get('created_utc')
                 
-                if t0_str:
-                    # Convert ISO string to Unix timestamp
-                    # Format: "2026-02-28T14:30:45Z"
-                    dt = datetime.strptime(t0_str, "%Y-%m-%dT%H:%M:%SZ")
-                    t0 = dt.timestamp()
-                    print(f"[INFO] Using orchestrator manifest t0: {t0_str}")
-                    return t0, True
+            if t0_str:
+                # Convert ISO string to Unix timestamp
+                # Format: "2026-02-28T14:30:45Z"
+                dt = datetime.strptime(t0_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+                t0 = dt.timestamp()
+                print(f"[INFO] Using orchestrator manifest t0: {t0_str}")
+                return t0, True
         except Exception as e:
             print(f"[WARN] Failed to read manifest.json: {e}")
             print("[INFO] Falling back to standalone mode")
