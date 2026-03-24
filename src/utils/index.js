@@ -19,6 +19,7 @@ export const createPageUrl = (page) => {
     'NewVisit': '/new-visit',
     'VisitDetails': '/visit-details',
     'PatientAnalysis': '/patient-analysis',
+    'ReportSummary': '/report-summary',
     'Login': '/login'
   };
 

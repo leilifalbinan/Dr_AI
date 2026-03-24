@@ -10,6 +10,7 @@ import NewVisit from '@/pages/NewVisit';
 import VisitDetails from '@/pages/VisitDetails';
 import PatientAnalysis from '@/pages/PatientAnalysis';
 import Patients from '@/pages/Patients';
+import ReportSummary from '@/pages/ReportSummary';
 import { preloadSentimentModel } from '@/services/aiService';
 
 const queryClient = new QueryClient();
@@ -81,6 +82,16 @@ function App() {  // ← Only ONE function declaration
                 <ProtectedRoute>
                   <Layout>
                     <PatientAnalysis />
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/report-summary"
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <ReportSummary />
                   </Layout>
                 </ProtectedRoute>
               }
