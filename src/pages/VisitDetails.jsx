@@ -167,6 +167,7 @@ export default function VisitDetails() {
           </Card>
         )}
 
+        {/* Gait Analysis Card */}
         {visit.gait_summary && (
           <Card className="bg-white border-none shadow-lg mb-6">
             <CardHeader>
@@ -293,7 +294,7 @@ export default function VisitDetails() {
               )}
 
               {/* Inter-word Frequency*/}
-              {visit.keyword_analysis.inter_word_frequency && 
+              {visit.keyword_analysis.inter_word_frequency &&
                Object.keys(visit.keyword_analysis.inter_word_frequency).length > 0 && (
                 <div>
                   <h4 className="font-semibold text-sm mb-3">Symptom Co-occurrence Patterns:</h4>
@@ -351,7 +352,7 @@ export default function VisitDetails() {
                 </div>
               </div>
 
-              {visit.sentiment_analysis.emotional_indicators && 
+              {visit.sentiment_analysis.emotional_indicators &&
                visit.sentiment_analysis.emotional_indicators.length > 0 && (
                 <div>
                   <h4 className="font-semibold text-sm mb-2">Emotional Indicators:</h4>
@@ -384,7 +385,7 @@ export default function VisitDetails() {
                     </div>
                   </div>
                 )}
-                
+
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   {visit.semantic_analysis.symptom_severity && (
                     <div className="p-3 bg-slate-50 rounded-lg">
@@ -654,7 +655,7 @@ export default function VisitDetails() {
                   {/* Comparison Note */}
                   <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
                     <p className="text-sm text-slate-600">
-                      <strong>Note:</strong> The main assessment shown above uses consensus from both models. 
+                      <strong>Note:</strong> The main assessment shown above uses consensus from both models.
                       This comparison shows individual model outputs for transparency.
                     </p>
                   </div>
