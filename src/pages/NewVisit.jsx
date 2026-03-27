@@ -36,7 +36,10 @@ export default function NewVisit() {
     spo2: "",
     height: "",
     weight: "",
-    bmi: ""
+    bmi: "",
+    gait_summary: null,
+    gait_summary_text: "",
+    gait_overlay_video_url: ""
   });
   const [speakerSegments, setSpeakerSegments] = useState([]);
   const [units, setUnits] = useState('metric');
@@ -53,14 +56,18 @@ export default function NewVisit() {
   });
   const [isStartingTranscription, setIsStartingTranscription] = useState(false);
   const [showNewPatientDialog, setShowNewPatientDialog] = useState(false);
-  // Camera refs and state for dual feeds
-  const video1Ref = useRef(null);
+  // Facial camera refs/state
   const video2Ref = useRef(null);
-  const canvas1Ref = useRef(null);
   const canvas2Ref = useRef(null);
   const cameraStreamRef = useRef(null);
   const animationRef = useRef(null);
   const [camerasActive, setCamerasActive] = useState(false);
+
+  // Gait refs/state
+  const [isGaitRunning, setIsGaitRunning] = useState(false);
+  const [gaitSummary, setGaitSummary] = useState(null);
+  const [gaitError, setGaitError] = useState(null);
+  const gaitRunPromiseRef = useRef(null);
   const [newPatient, setNewPatient] = useState({
     first_name: "",
     last_name: "",
@@ -85,7 +92,7 @@ export default function NewVisit() {
   // Preconnect to transcription server so Start Recording is faster
   useEffect(() => {
     transcriptionService.connect().catch(() => {});
-  }, []);
+  }, [isGaitRunning]);
 
   // Cleanup transcription on unmount
   useEffect(() => {
@@ -97,7 +104,6 @@ export default function NewVisit() {
         transcriptionListenerRef.current();
       }
       transcriptionService.disconnect();
-      // stop camera streams if active
       try {
         if (cameraStreamRef.current) {
           cameraStreamRef.current.getTracks().forEach((t) => t.stop());
@@ -106,60 +112,57 @@ export default function NewVisit() {
         if (animationRef.current) {
           cancelAnimationFrame(animationRef.current);
         }
+        if (isGaitRunning) {
+          fetch('/api/gait/stop', { method: 'POST' }).catch(() => {});
+        }
       } catch (err) {
-        console.warn('Error cleaning up camera streams', err);
+        console.warn('Error cleaning up monitoring streams', err);
       }
     };
   }, []);
 
-  // Start both camera feeds (for now both attach the default webcam stream)
+  // Start facial camera preview
   const startCameras = async () => {
     try {
       if (cameraStreamRef.current) return;
       const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
       cameraStreamRef.current = stream;
-      if (video1Ref.current) {
-        video1Ref.current.srcObject = stream;
-        video1Ref.current.play().catch(() => {});
-      }
+
       if (video2Ref.current) {
-        // attach same stream for prototype/demo purposes
         video2Ref.current.srcObject = stream;
         video2Ref.current.play().catch(() => {});
       }
+
       setCamerasActive(true);
-      // start a lightweight overlay loop
+
       const loop = () => {
         try {
-          [
-            { video: video1Ref.current, canvas: canvas1Ref.current },
-            { video: video2Ref.current, canvas: canvas2Ref.current }
-          ].forEach(({ video, canvas }, idx) => {
-            if (!video || !canvas) return;
+          const video = video2Ref.current;
+          const canvas = canvas2Ref.current;
+          if (video && canvas) {
             const ctx = canvas.getContext('2d');
             canvas.width = video.videoWidth || 640;
             canvas.height = video.videoHeight || 480;
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-            // simple overlay: timestamp and active badge
             ctx.fillStyle = 'rgba(0,0,0,0.35)';
             ctx.fillRect(8, 8, 160, 28);
             ctx.fillStyle = '#fff';
             ctx.font = '12px Inter, ui-sans-serif, system-ui';
             ctx.fillText(new Date().toLocaleTimeString(), 16, 26);
-            // label corner
-            ctx.fillStyle = idx === 0 ? 'rgba(16,185,129,0.9)' : 'rgba(14,165,233,0.9)';
+            ctx.fillStyle = 'rgba(14,165,233,0.9)';
             ctx.beginPath();
             ctx.arc(canvas.width - 18, 18, 8, 0, Math.PI * 2);
             ctx.fill();
-          });
+          }
         } catch (err) {
           // ignore overlay errors
         }
         animationRef.current = requestAnimationFrame(loop);
       };
+
       animationRef.current = requestAnimationFrame(loop);
     } catch (err) {
-      console.error('Could not start cameras', err);
+      console.error('Could not start facial camera', err);
       alert('Unable to access camera. Make sure the site is served over HTTPS or use localhost and grant permissions.');
     }
   };
@@ -170,13 +173,78 @@ export default function NewVisit() {
         cameraStreamRef.current.getTracks().forEach((t) => t.stop());
         cameraStreamRef.current = null;
       }
-      if (video1Ref.current) video1Ref.current.srcObject = null;
       if (video2Ref.current) video2Ref.current.srcObject = null;
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
     } catch (err) {
-      console.warn('Error stopping cameras', err);
+      console.warn('Error stopping facial camera', err);
     }
     setCamerasActive(false);
+  };
+
+  const formatGaitSummaryText = (summary) => {
+    if (!summary) return '';
+    if (summary.summary_text) return summary.summary_text;
+
+    const parts = [];
+    if (summary.mean_speed_mps != null) parts.push(`speed ${Number(summary.mean_speed_mps).toFixed(2)} m/s`);
+    if (summary.cadence_spm != null) parts.push(`cadence ${Number(summary.cadence_spm).toFixed(1)} steps/min`);
+    if (summary.num_steps_est != null) parts.push(`estimated steps ${summary.num_steps_est}`);
+    if (summary.knee_symmetry_index_percent != null) parts.push(`knee symmetry index ${Number(summary.knee_symmetry_index_percent).toFixed(1)}%`);
+    if (summary.stability_ml_rms_m != null) parts.push(`medio-lateral sway RMS ${Number(summary.stability_ml_rms_m).toFixed(3)} m`);
+    if (summary.sit_to_stand_detected != null) parts.push(`sit-to-stand ${summary.sit_to_stand_detected ? 'detected' : 'not detected'}`);
+
+    return parts.length > 0 ? `Gait analysis: ${parts.join(', ')}.` : 'Gait analysis completed.';
+  };
+
+  const handleStartGait = async () => {
+    try {
+      setGaitError(null);
+      setGaitSummary(null);
+      setIsGaitRunning(true);
+
+      gaitRunPromiseRef.current = fetch('/api/gait?duration=0')
+        .then(async (res) => {
+          const data = await res.json();
+          if (!res.ok || !data.ok) {
+            throw new Error(data.error || 'Failed to run gait capture');
+          }
+
+          const summary = data.summary || {};
+          const summaryText = formatGaitSummaryText(summary);
+
+          setGaitSummary(summary);
+          setVisitData((prev) => ({
+            ...prev,
+            gait_summary: summary,
+            gait_summary_text: summaryText,
+            gait_overlay_video_url: summary.overlay_video_url || ''
+          }));
+        })
+        .catch((err) => {
+          console.error(err);
+          setGaitError(err.message || 'Failed to run gait capture');
+        })
+        .finally(() => {
+          setIsGaitRunning(false);
+        });
+
+    } catch (err) {
+      setGaitError(err.message || 'Failed to start gait capture');
+      setIsGaitRunning(false);
+    }
+  };
+
+  const handleStopGait = async () => {
+    try {
+      await fetch('/api/gait/stop', { method: 'POST' });
+      if (gaitRunPromiseRef.current) {
+        await gaitRunPromiseRef.current;
+      }
+    } catch (err) {
+      console.error(err);
+      setGaitError(err.message || 'Failed to stop gait capture');
+      setIsGaitRunning(false);
+    }
   };
 
   // Handle transcription updates
@@ -400,7 +468,10 @@ export default function NewVisit() {
         sentiment_analysis: consensus.sentiment_analysis,
         semantic_analysis: consensus.semantic_analysis,
         ai_assessment: consensus.ai_assessment,
-        ai_comparison: results
+        ai_comparison: results,
+        gait_summary: visitData.gait_summary,
+        gait_summary_text: visitData.gait_summary_text,
+        gait_overlay_video_url: visitData.gait_overlay_video_url
       });
 
     } catch (error) {
@@ -693,39 +764,65 @@ export default function NewVisit() {
               </CardTitle>
               <div className="flex items-center gap-2">
                 {!camerasActive ? (
-                  <Button size="sm" variant="outline" onClick={startCameras} className="border-teal-200">Start Cameras</Button>
+                  <Button size="sm" variant="outline" onClick={startCameras} className="border-teal-200">Start Facial Camera</Button>
                 ) : (
-                  <Button size="sm" variant="destructive" onClick={stopCameras}>Stop Cameras</Button>
+                  <Button size="sm" variant="destructive" onClick={stopCameras}>Stop Facial Camera</Button>
                 )}
               </div>
             </div>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 gap-4">
-              {/* Motion Analysis (left) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <h4 className="text-sm font-semibold text-teal-900">Motion Analysis</h4>
-                  <span className="text-xs text-gray-500">Live</span>
+                  <h4 className="text-sm font-semibold text-teal-900">Motion / Gait Analysis</h4>
+                  <span className="text-xs text-gray-500">
+                    {isGaitRunning ? 'Capturing' : gaitSummary ? 'Completed' : 'Idle'}
+                  </span>
                 </div>
-                <div className="relative bg-black rounded overflow-hidden" style={{aspectRatio: '4/3'}}>
-                  <video ref={video1Ref} className="w-full h-full object-cover" playsInline muted />
-                  <canvas ref={canvas1Ref} className="absolute inset-0 w-full h-full pointer-events-none" />
+                <div className="relative bg-black rounded overflow-hidden" style={{ aspectRatio: '4/3' }}>
+                  <img
+                    src="/api/gait/live"
+                    alt="Live gait stream"
+                    className="w-full h-full object-cover"
+                  />
                 </div>
-                <p className="text-xs text-gray-600">Using webcam (prototype). Motion overlay shown.</p>
+                <div className="flex gap-2">
+                  {!isGaitRunning ? (
+                    <Button size="sm" onClick={handleStartGait}>
+                      Start Gait Capture
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="destructive" onClick={handleStopGait}>
+                      Stop Gait Capture
+                    </Button>
+                  )}
+                </div>
+                {gaitError && (
+                  <p className="text-xs text-red-600">{gaitError}</p>
+                )}
+                {gaitSummary && (
+                  <div className="text-xs text-slate-700 bg-slate-50 rounded p-3 space-y-1">
+                    <div><strong>Summary:</strong> {visitData.gait_summary_text || formatGaitSummaryText(gaitSummary)}</div>
+                    <div><strong>Speed:</strong> {gaitSummary.mean_speed_mps != null ? `${Number(gaitSummary.mean_speed_mps).toFixed(2)} m/s` : 'N/A'}</div>
+                    <div><strong>Cadence:</strong> {gaitSummary.cadence_spm != null ? `${Number(gaitSummary.cadence_spm).toFixed(1)} spm` : 'N/A'}</div>
+                    <div><strong>Steps:</strong> {gaitSummary.num_steps_est ?? 'N/A'}</div>
+                    <div><strong>Knee symmetry index:</strong> {gaitSummary.knee_symmetry_index_percent != null ? `${Number(gaitSummary.knee_symmetry_index_percent).toFixed(1)}%` : 'N/A'}</div>
+                    <div><strong>Sit-to-stand:</strong> {gaitSummary.sit_to_stand_detected ? 'Detected' : 'Not detected'}</div>
+                  </div>
+                )}
               </div>
 
-              {/* Facial Analysis (right) */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <h4 className="text-sm font-semibold text-teal-900">Facial Analysis</h4>
-                  <span className="text-xs text-gray-500">Live</span>
+                  <span className="text-xs text-gray-500">{camerasActive ? 'Live' : 'Idle'}</span>
                 </div>
                 <div className="relative bg-black rounded overflow-hidden" style={{aspectRatio: '4/3'}}>
                   <video ref={video2Ref} className="w-full h-full object-cover" playsInline muted />
                   <canvas ref={canvas2Ref} className="absolute inset-0 w-full h-full pointer-events-none" />
                 </div>
-                <p className="text-xs text-gray-600">Using webcam (prototype). Facial landmarks / analysis will be added.</p>
+                <p className="text-xs text-gray-600">Webcam preview for facial analysis. Your gait feed now comes from the RealSense backend.</p>
               </div>
             </div>
           </CardContent>

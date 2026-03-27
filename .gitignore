@@ -90,3 +90,4 @@ dist
 # Zip files
 *.zip
 
+gait_outputs/
