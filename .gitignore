@@ -1,0 +1,94 @@
+# ------------------From emotion analysis (Sean)-----------------
+# --------------------------
+# Virtual environments
+# --------------------------
+.venv/
+.venv311/
+.venv_gpu/
+venv/
+venv_training/
+venv_runtime/
+env/
+
+# --------------------------
+# Python bytecode/cache
+# --------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# --------------------------
+# Jupyter Notebook cache
+# --------------------------
+.ipynb_checkpoints/
+
+# --------------------------
+# Large data or archive folders
+# --------------------------
+archive/
+fer2013_dataset/
+master_dataset/
+
+# --------------------------
+# Model weights and large outputs
+# --------------------------
+*.pth
+*.pt
+*.onnx
+*.ckpt
+*.h5
+models/
+checkpoints/
+
+
+# --------------------------
+# Generated images / plots
+# --------------------------
+*.png
+
+# --------------------------
+# VS Code settings
+# --------------------------
+.vscode/
+
+# --------------------------
+# System files
+# --------------------------
+Thumbs.db
+.DS_Store
+
+# --------------------------
+# csv files from patient data
+# --------------------------
+emotion_pipeline/emotion_logs/
+
+
+# --------------------------
+# Generated runtime data
+# --------------------------
+
+runs/
+
+# generated reports
+report.json
+
+# generated figures
+figures/
+
+#-------------From Other team's commits (likely Victoria or Carson)----------------------
+
+node_modules
+dist
+.env
+.env.local
+*.log
+.DS_Store
+.vscode
+.idea
+
+# Zip files
+*.zip
+
+gait_outputs/
+
