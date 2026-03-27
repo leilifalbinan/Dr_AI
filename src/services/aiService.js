@@ -1,7 +1,10 @@
 const OPENAI_API_KEY = import.meta.env.VITE_OPENAI_API_KEY;
 const OLLAMA_BASE_URL = import.meta.env.VITE_OLLAMA_URL || 'http://localhost:11434';
 
-import { pipeline } from '@xenova/transformers';
+import { pipeline, env } from '@xenova/transformers';
+env.allowRemoteModels = true;
+env.allowLocalModels = false;
+env.useBrowserCache = true;
 
 
 let sentimentClassifier = null;
@@ -17,7 +20,7 @@ async function initializeSentimentClassifier() {
   }
   
   isInitializing = true;
-  console.log('🤖 Loading Transformers.js sentiment model (one-time, ~10 seconds)...');
+  console.log('Loading Transformers.js sentiment model (one-time, ~10 seconds)...');
   
   initializationPromise = (async () => {
     try {
@@ -56,16 +59,16 @@ const DIAGNOSTIC_KEYWORDS = {
     words: ['headache', 'seizure', 'numbness', 'tingling', 'confusion']
   },
   MUSCULOSKELETAL: {
-    phrases: ['joint pain', 'muscle pain', 'back pain', 'knee pain'],
-    words: ['joint', 'muscle', 'pain', 'ache', 'sore', 'stiff', 'weak']
+    phrases: ['joint pain', 'muscle pain', 'back pain', 'knee pain', 'lower back'],
+    words: ['joint', 'muscle', 'pain', 'ache', 'sore', 'stiff', 'weak', 'chronic', 'constant', 'painful', 'radiating']
   },
   CONSTITUTIONAL: {
     phrases: ['feel tired', 'no energy', 'weight loss'],
-    words: ['fever', 'chills', 'fatigue', 'exhausted', 'sweats']
+    words: ['fever', 'chills', 'fatigue', 'exhausted', 'sweats', 'struggling', 'worse', 'terrible', 'unbearable']
   },
   PSYCHIATRIC: {
-    phrases: ['feel anxious', 'feel depressed', 'can\'t sleep'],
-    words: ['anxiety', 'depression', 'stress', 'worried', 'mood']
+    phrases: ['feel anxious', 'feel depressed', 'can\'t sleep', 'trouble sleeping', 'hard to sleep'],
+    words: ['anxiety', 'depression', 'stress', 'worried', 'mood', 'anxious', 'nervous']
   }
 };
 
@@ -113,6 +116,16 @@ const DIAGNOSTIC_KEYWORDS = {
     top_keywords: topKeywords
   };
 };*/
+// Filters transcription to patient speech only
+export const extractPatientText = (transcription) => {
+  if (!transcription) return '';
+  const patientLines = transcription
+    .split('\n')
+    .filter(line => /^patient\s*:/i.test(line.trim()))
+    .map(line => line.replace(/^patient\s*:\s*/i, '').trim());
+  return patientLines.join(' ');
+};
+
 export const analyzeKeywords = (text) => {
   const lowerText = text.toLowerCase();
   const words = lowerText.split(/\s+/);
@@ -168,11 +181,54 @@ export const analyzeKeywords = (text) => {
       category: data.category
     }));
   
+  
+  // NEW: Inter-word frequency analysis (symptom co-occurrence)
+  // Track how often diagnostic keywords appear near each other (within 10 words)
+  const interWordFrequency = {};
+  const keywordList = Object.keys(diagnosticKeywords);
+  const windowSize = 10; // Look within 10 words
+  
+  // Find positions of all keywords in text
+  const keywordPositions = {};
+  keywordList.forEach(keyword => {
+    keywordPositions[keyword] = [];
+    const regex = new RegExp(`\\b${keyword}\\b`, 'gi');
+    let match;
+    while ((match = regex.exec(lowerText)) !== null) {
+      // Approximate word position
+      const wordsBefore = lowerText.substring(0, match.index).split(/\s+/).length;
+      keywordPositions[keyword].push(wordsBefore);
+    }
+  });
+  
+  // Calculate co-occurrence
+  keywordList.forEach((keyword1, i) => {
+    keywordList.slice(i + 1).forEach(keyword2 => {
+      const positions1 = keywordPositions[keyword1];
+      const positions2 = keywordPositions[keyword2];
+      
+      let coOccurrenceCount = 0;
+      positions1.forEach(pos1 => {
+        positions2.forEach(pos2 => {
+          if (Math.abs(pos1 - pos2) <= windowSize) {
+            coOccurrenceCount++;
+          }
+        });
+      });
+      
+      if (coOccurrenceCount > 0) {
+        const pairKey = `${keyword1} + ${keyword2}`;
+        interWordFrequency[pairKey] = coOccurrenceCount;
+      }
+    });
+  });
+  
   return {
     total_words: totalWords,
     diagnostic_keywords: diagnosticKeywords,
     keyword_percentage: parseFloat(keywordPercentage.toFixed(1)),
-    top_keywords: topKeywords
+    top_keywords: topKeywords,
+    inter_word_frequency: interWordFrequency // NEW: Co-occurrence patterns
   };
 };
 
@@ -354,6 +410,32 @@ export const analyzeSemantics = (text) => {
 
 
 
+const buildGaitClinicalContext = (visitData) => {
+  if (typeof visitData !== 'object' || !visitData.gait_summary) {
+    return '';
+  }
+
+  const gait = visitData.gait_summary;
+  let block = '\n\nGait / Motion Analysis:';
+
+  if (visitData.gait_summary_text) {
+    block += `\n- Summary: ${visitData.gait_summary_text}`;
+  } else if (gait.summary_text) {
+    block += `\n- Summary: ${gait.summary_text}`;
+  }
+  if (gait.mean_speed_mps != null) block += `\n- Mean gait speed: ${gait.mean_speed_mps} m/s`;
+  if (gait.cadence_spm != null) block += `\n- Cadence: ${gait.cadence_spm} steps/min`;
+  if (gait.num_steps_est != null) block += `\n- Estimated number of steps: ${gait.num_steps_est}`;
+  if (gait.knee_symmetry_index_percent != null) block += `\n- Knee symmetry index: ${gait.knee_symmetry_index_percent}%`;
+  if (gait.stability_ap_rms_m != null) block += `\n- AP stability RMS: ${gait.stability_ap_rms_m} m`;
+  if (gait.stability_ml_rms_m != null) block += `\n- ML stability RMS: ${gait.stability_ml_rms_m} m`;
+  if (gait.stability_planar_rms_m != null) block += `\n- Planar stability RMS: ${gait.stability_planar_rms_m} m`;
+  if (gait.sit_to_stand_detected != null) block += `\n- Sit-to-stand detected: ${gait.sit_to_stand_detected ? 'yes' : 'no'}`;
+  if (gait.sit_to_stand_time_s != null) block += `\n- Sit-to-stand time: ${gait.sit_to_stand_time_s} s`;
+
+  return block;
+};
+
 // OpenAI API call
 const callOpenAI = async (visitData) => {
   if (!OPENAI_API_KEY) {
@@ -405,6 +487,8 @@ const callOpenAI = async (visitData) => {
     if (visitData.physician_notes && visitData.physician_notes.trim()) {
       clinicalContext += `\n\nPhysician's Clinical Observations:\n${visitData.physician_notes}`;
     }
+
+    clinicalContext += buildGaitClinicalContext(visitData);
   }
   
   const prompt = `You are a medical AI assistant. Analyze this patient information and provide:
@@ -461,7 +545,7 @@ const callOllama = async (visitData) => {
   // Build comprehensive clinical context
   let clinicalContext = '';
   
-  // Extract transcription (handle both string and object)
+  // Extract transcription 
   const transcription = typeof visitData === 'string' ? visitData : visitData.transcription;
   
   // Add vitals if present and visitData is an object
@@ -503,6 +587,8 @@ const callOllama = async (visitData) => {
     if (visitData.physician_notes && visitData.physician_notes.trim()) {
       clinicalContext += `\n\nPhysician's Clinical Observations:\n${visitData.physician_notes}`;
     }
+
+    clinicalContext += buildGaitClinicalContext(visitData);
   }
   
   const prompt = `You are a medical AI assistant. Analyze this patient information and provide:
@@ -599,10 +685,12 @@ export const getConsensusResult = async (results, transcription) => {
   const baseModel = successfulModels.includes('openai') ? 'openai' : 'ollama';
   const baseResult = results[baseModel].diagnostic;
   
-  // Generate local analysis for consensus
-  const keywordAnalysis = analyzeKeywords(transcription);
-  const sentimentAnalysis = await analyzeSentiment(transcription); 
-  const semanticAnalysis = analyzeSemantics(transcription);
+
+  // Generate local analysis for consensus — patient speech only
+  const patientText = extractPatientText(transcription) || transcription;
+  const keywordAnalysis = analyzeKeywords(patientText);
+  const sentimentAnalysis = await analyzeSentiment(patientText);
+  const semanticAnalysis = analyzeSemantics(patientText);
   
   return {
     keyword_analysis: keywordAnalysis,
