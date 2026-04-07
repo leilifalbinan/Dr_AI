@@ -20,6 +20,7 @@ export const createPageUrl = (page) => {
     'VisitDetails': '/visit-details',
     'PatientAnalysis': '/patient-analysis',
     'ReportSummary': '/report-summary',
+    'ReportSerialTrends': '/report-serial-trends',
     'Login': '/login'
   };
 

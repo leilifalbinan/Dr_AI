@@ -11,6 +11,7 @@ import VisitDetails from '@/pages/VisitDetails';
 import PatientAnalysis from '@/pages/PatientAnalysis';
 import Patients from '@/pages/Patients';
 import ReportSummary from '@/pages/ReportSummary';
+import ReportSerialTrends from '@/pages/ReportSerialTrends';
 import { preloadSentimentModel } from '@/services/aiService';
 
 const queryClient = new QueryClient();
@@ -92,6 +93,16 @@ function App() {  // ← Only ONE function declaration
                 <ProtectedRoute>
                   <Layout>
                     <ReportSummary />
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/report-serial-trends"
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <ReportSerialTrends />
                   </Layout>
                 </ProtectedRoute>
               }

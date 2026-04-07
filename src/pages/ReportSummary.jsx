@@ -1,5 +1,8 @@
 import React, { useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { format } from "date-fns";
+import { api } from "@/api/apiClient";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -13,12 +16,22 @@ import {
   Filler,
 } from "chart.js";
 import { Chart } from "react-chartjs-2";
-import { ArrowLeft, FileBarChart } from "lucide-react";
+import { ArrowLeft, FileBarChart, Activity, FileText, TrendingUp, Brain, Download } from "lucide-react";
 import { createPageUrl, cn } from "@/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { demoFace, demoAudio, demoGait } from "@/data/reportSummaryDemoData";
+import { generateCombinedReportPDF } from "@/utils/combinedReportPdf";
+import { demoSerialVisitSnapshots } from "@/data/reportSerialTrendDemoData";
+import {
+  demoFace,
+  demoAudio,
+  demoGait,
+  demoVisitSnapshot,
+  DEMO_REPORT_PATIENT_ID,
+  DEMO_REPORT_VISIT_ID,
+  demoAiAssessment,
+} from "@/data/reportSummaryDemoData";
 
 ChartJS.register(
   CategoryScale,
@@ -75,14 +88,187 @@ function qualLabel(v, low, mid) {
 const chartBox = "relative h-[180px] w-full";
 const chartBoxTall = "relative h-[220px] w-full";
 
+function AiDiagnosticAssessmentPanel({ assessment }) {
+  const dx = assessment?.suggested_diagnoses;
+  const tests = assessment?.recommended_tests;
+  const treatments = assessment?.treatment_suggestions;
+  const education = assessment?.patient_education;
+  const followUp = assessment?.follow_up_recommendations;
+  const note = assessment?.consensus_note;
+
+  const hasContent =
+    (dx && dx.length > 0) ||
+    (tests && tests.length > 0) ||
+    (treatments && treatments.length > 0) ||
+    (education && education.length > 0) ||
+    (followUp && String(followUp).trim());
+
+  if (!hasContent) {
+    return (
+      <p className="text-sm text-teal-700 py-6">
+        No AI diagnostic assessment is available for this visit yet. Run analysis on a new visit or use demo data.
+      </p>
+    );
+  }
+
+  return (
+    <Card className="border-teal-200 bg-white/80 backdrop-blur shadow-sm">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-teal-900">
+          <Brain className="w-5 h-5 text-teal-700" />
+          AI Diagnostic Assessment
+        </CardTitle>
+        {note ? <p className="text-xs text-teal-600 mt-1 font-normal">{note}</p> : null}
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-6">
+          {dx && dx.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 mb-3 pb-2 border-b-2 border-blue-200">
+                <div className="w-2 h-2 rounded-full bg-blue-600" />
+                <h4 className="font-semibold text-base text-teal-900">Differential Diagnosis</h4>
+              </div>
+              <div className="space-y-2 pl-4">
+                {dx.map((diagnosis, idx) => (
+                  <div key={idx} className="text-teal-900 py-1">
+                    {diagnosis}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {tests && tests.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 mb-3 pb-2 border-b-2 border-emerald-200">
+                <div className="w-2 h-2 rounded-full bg-emerald-600" />
+                <h4 className="font-semibold text-base text-teal-900">Recommended Workup</h4>
+              </div>
+              <div className="space-y-2 pl-4">
+                {tests.map((test, idx) => (
+                  <div key={idx} className="text-teal-900 py-1">
+                    {test}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {treatments && treatments.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 mb-3 pb-2 border-b-2 border-violet-200">
+                <div className="w-2 h-2 rounded-full bg-violet-600" />
+                <h4 className="font-semibold text-base text-teal-900">Treatment Plan</h4>
+              </div>
+              <div className="space-y-2 pl-4">
+                {treatments.map((treatment, idx) => (
+                  <div key={idx} className="text-teal-900 py-1">
+                    {treatment}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {education && education.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 mb-3 pb-2 border-b-2 border-teal-300">
+                <div className="w-2 h-2 rounded-full bg-teal-600" />
+                <h4 className="font-semibold text-base text-teal-900">Patient Education</h4>
+              </div>
+              <div className="space-y-2 pl-4">
+                {education.map((item, idx) => (
+                  <div key={idx} className="text-teal-900 py-1">
+                    {item}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {followUp && String(followUp).trim() && (
+            <div>
+              <div className="flex items-center gap-2 mb-3 pb-2 border-b-2 border-amber-200">
+                <div className="w-2 h-2 rounded-full bg-amber-600" />
+                <h4 className="font-semibold text-base text-teal-900">Follow-up</h4>
+              </div>
+              <div className="pl-4">
+                <p className="text-teal-900 leading-relaxed">{followUp}</p>
+              </div>
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function ReportSummary() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const visitIdParam = searchParams.get("visitId") || DEMO_REPORT_VISIT_ID;
+
+  const { data: loadedVisit } = useQuery({
+    queryKey: ["visit", visitIdParam],
+    queryFn: async () => {
+      const rows = await api.entities.Visit.filter({ id: visitIdParam });
+      return rows[0];
+    },
+    enabled: !!visitIdParam,
+  });
+
   const [face] = useState(demoFace);
   const [audio] = useState(demoAudio);
   const [gait] = useState(demoGait);
   const [showFaceRaw, setShowFaceRaw] = useState(false);
   const [showAudioRaw, setShowAudioRaw] = useState(false);
   const [showGaitRaw, setShowGaitRaw] = useState(false);
+  const [reportTab, setReportTab] = useState("multimodal");
+  const [keywordView, setKeywordView] = useState("diagnostic");
+
+  const patientIdForTrends = loadedVisit?.patient_id ?? DEMO_REPORT_PATIENT_ID;
+
+  const { data: patient } = useQuery({
+    queryKey: ["patient", patientIdForTrends],
+    queryFn: async () => {
+      const rows = await api.entities.Patient.filter({ id: patientIdForTrends });
+      return rows[0];
+    },
+    enabled: !!patientIdForTrends,
+  });
+
+  const patientDisplayName = useMemo(() => {
+    if (!patient) return "Unknown Patient";
+    const fullName = [patient.first_name, patient.last_name].filter(Boolean).join(" ").trim();
+    return fullName || "Unknown Patient";
+  }, [patient]);
+
+  const aiAssessment = useMemo(() => {
+    const a = loadedVisit?.ai_assessment;
+    if (a && typeof a === "object") return a;
+    return demoAiAssessment;
+  }, [loadedVisit]);
+
+  const vitalsDisplay = useMemo(() => {
+    const v = loadedVisit;
+    if (v && (v.bp_systolic || v.heart_rate)) {
+      return {
+        visit_date: v.visit_date,
+        chief_complaint: v.chief_complaint,
+        bp_systolic: v.bp_systolic,
+        bp_diastolic: v.bp_diastolic,
+        heart_rate: v.heart_rate,
+        respiratory_rate: v.respiratory_rate,
+        temperature: v.temperature,
+        temperature_unit: v.temperature_unit || "fahrenheit",
+        spo2: v.spo2,
+        height: v.height,
+        weight: v.weight,
+        bmi: v.bmi,
+      };
+    }
+    return { ...demoVisitSnapshot };
+  }, [loadedVisit]);
 
   const visitMeta = useMemo(() => {
     const allRecs = [...face, ...audio, ...gait];
@@ -90,12 +276,12 @@ export default function ReportSummary() {
     const first = allRecs[0];
     const phases = [...new Set(allRecs.map((r) => r.phase))];
     return {
-      visitId: first.visit_id ?? "—",
-      patientId: first.patient_id ?? "—",
+      visitId: visitIdParam,
+      patientId: loadedVisit?.patient_id ?? first.patient_id ?? "—",
       phase: phases.join(", "),
       schema: first.schema_version ?? "v0.1",
     };
-  }, [face, audio, gait]);
+  }, [face, audio, gait, visitIdParam, loadedVisit]);
 
   const { cf, ca, cg, co } = useMemo(() => {
     const f = avgConf(face);
@@ -130,23 +316,22 @@ export default function ReportSummary() {
     }
 
     const sorted = Object.entries(emotionPct).sort((a, b) => b[1] - a[1]);
-    const allEmos = [
-      ...new Set(windows.flatMap((w) => Object.keys(w.features?.emotion_counts || {}))),
-    ];
+    const allEmos = [...new Set(windows.flatMap((w) => Object.keys(w.features?.emotion_counts || {})))];
     const timelineLabels = windows.map((w) => `${w.t_start}s–${w.t_end}s`);
-    const timelineDatasets = allEmos.map((emo) => {
-      const totals = windows.map((w) => {
+    const timelineDatasets = allEmos.map((emo) => ({
+      label: labelEmo(emo),
+      data: windows.map((w) => {
         const ec = w.features?.emotion_counts || {};
-        const t = Object.values(ec).reduce((a, v) => a + v, 0) || 1;
-        return +(((ec[emo] || 0) / t) * 100).toFixed(1);
-      });
-      return {
-        label: labelEmo(emo),
-        data: totals,
-        backgroundColor: emoColor(emo),
-        stack: "emo",
-      };
-    });
+        const total = Object.values(ec).reduce((a, v) => a + v, 0) || 1;
+        return +(((ec[emo] || 0) / total) * 100).toFixed(1);
+      }),
+      borderColor: emoColor(emo),
+      backgroundColor: "transparent",
+      tension: 0.25,
+      pointRadius: 2,
+      pointHoverRadius: 3,
+      borderWidth: 2,
+    }));
 
     return {
       anyInvalid,
@@ -163,8 +348,8 @@ export default function ReportSummary() {
           },
         ],
       },
-      timeline:
-        windows.length > 0
+      emotionTimeline:
+        timelineDatasets.length > 0
           ? {
               labels: timelineLabels,
               datasets: timelineDatasets,
@@ -341,9 +526,9 @@ export default function ReportSummary() {
       maintainAspectRatio: false,
       plugins: { legend: { labels: { font: { size: 11 } } } },
       scales: {
-        x: { stacked: true, ticks: { font: { size: 10 } } },
+        x: { ticks: { font: { size: 10 } } },
         y: {
-          stacked: true,
+          min: 0,
           max: 100,
           ticks: { callback: (v) => `${v}%`, font: { size: 10 } },
         },
@@ -446,8 +631,49 @@ export default function ReportSummary() {
           </div>
           <div className="text-right text-xs font-mono text-teal-800/80 sm:pr-2">
             <div className="font-semibold">{visitMeta.visitId}</div>
+            <div className="font-semibold">{patientDisplayName}</div>
             <div>Patient {visitMeta.patientId}</div>
           </div>
+        </div>
+
+        <div className="flex flex-col sm:flex-row flex-wrap gap-3 mb-6">
+          <Link to={createPageUrl(`VisitDetails?id=${visitIdParam}&from=report`)} className="inline-flex">
+            <Button className="bg-violet-600 hover:bg-violet-700 text-white w-full sm:w-auto">
+              <FileText className="w-4 h-4 mr-2 shrink-0" />
+              Full visit analysis (transcription &amp; NLP)
+            </Button>
+          </Link>
+          <Link
+            to={createPageUrl(
+              `ReportSerialTrends?patientId=${encodeURIComponent(patientIdForTrends)}&visitId=${encodeURIComponent(visitIdParam)}`
+            )}
+            className="inline-flex"
+          >
+            <Button variant="outline" className="border-teal-300 text-teal-800 hover:bg-teal-50 w-full sm:w-auto">
+              <TrendingUp className="w-4 h-4 mr-2 shrink-0" />
+              Continue to serial trend analysis
+            </Button>
+          </Link>
+          <Button
+            variant="outline"
+            className="border-teal-300 text-teal-800 hover:bg-teal-50 w-full sm:w-auto"
+            onClick={() =>
+              generateCombinedReportPDF({
+                patient,
+                visit: loadedVisit || null,
+                visitMeta,
+                vitals: vitalsDisplay,
+                faceDerived,
+                audioDerived,
+                gaitDerived,
+                aiAssessment,
+                serialVisits: demoSerialVisitSnapshots,
+              })
+            }
+          >
+            <Download className="w-4 h-4 mr-2 shrink-0" />
+            Download full report PDF
+          </Button>
         </div>
 
         <div className="flex flex-col lg:flex-row gap-6">
@@ -463,6 +689,10 @@ export default function ReportSummary() {
                   <div>
                     <p className="text-[0.65rem] uppercase tracking-wider text-teal-300/90">Visit ID</p>
                     <p className="font-mono font-semibold">{visitMeta.visitId}</p>
+                  </div>
+                  <div>
+                    <p className="text-[0.65rem] uppercase tracking-wider text-teal-300/90">Patient Name</p>
+                    <p className="font-semibold">{patientDisplayName}</p>
                   </div>
                   <div>
                     <p className="text-[0.65rem] uppercase tracking-wider text-teal-300/90">Patient ID</p>
@@ -482,43 +712,118 @@ export default function ReportSummary() {
 
             <Card className="border-teal-200 bg-white/80 backdrop-blur">
               <CardHeader className="pb-2">
-                <CardTitle className="text-xs font-semibold uppercase tracking-wider text-teal-600">
-                  Subsystems
+                <CardTitle className="text-xs font-semibold uppercase tracking-wider text-teal-600 flex items-center gap-2">
+                  <Activity className="w-3.5 h-3.5" />
+                  Vital signs
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-2">
-                {[
-                  { id: "face", label: "Face", conf: cf, active: "border-blue-300 bg-blue-50" },
-                  { id: "audio", label: "Audio", conf: ca, active: "border-violet-300 bg-violet-50" },
-                  { id: "gait", label: "Gait", conf: cg, active: "border-emerald-300 bg-emerald-50" },
-                ].map(({ id, label, conf, active }) => {
-                  const has = id === "face" ? face.length : id === "audio" ? audio.length : gait.length;
-                  return (
-                    <div
-                      key={id}
-                      className={cn(
-                        "flex items-center gap-3 rounded-lg border px-3 py-2 text-sm transition-colors",
-                        has ? active : "border-transparent bg-teal-50/50 hover:border-teal-200"
-                      )}
-                    >
-                      <span
-                        className={cn(
-                          "h-2.5 w-2.5 shrink-0 rounded-full",
-                          id === "face" && "bg-blue-600",
-                          id === "audio" && "bg-violet-700",
-                          id === "gait" && "bg-emerald-600"
-                        )}
-                      />
-                      <span className="font-medium text-teal-900 flex-1">{label}</span>
-                      <span className="font-mono text-xs text-teal-600">{fmtConf(conf)}</span>
+              <CardContent className="text-sm space-y-3">
+                {vitalsDisplay.visit_date && (
+                  <div>
+                    <p className="text-[0.65rem] uppercase tracking-wider text-teal-600">Visit date</p>
+                    <p className="font-medium text-teal-900">
+                      {format(new Date(vitalsDisplay.visit_date), "MMM d, yyyy")}
+                    </p>
+                  </div>
+                )}
+                {vitalsDisplay.chief_complaint ? (
+                  <div>
+                    <p className="text-[0.65rem] uppercase tracking-wider text-teal-600">Chief complaint</p>
+                    <p className="text-teal-900 leading-snug">{vitalsDisplay.chief_complaint}</p>
+                  </div>
+                ) : null}
+                <div className="grid grid-cols-2 gap-2">
+                  {vitalsDisplay.bp_systolic != null && vitalsDisplay.bp_diastolic != null && (
+                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2 text-center">
+                      <p className="text-lg font-bold text-teal-900 font-mono">
+                        {vitalsDisplay.bp_systolic}/{vitalsDisplay.bp_diastolic}
+                      </p>
+                      <p className="text-[0.6rem] text-teal-600 uppercase">BP mmHg</p>
                     </div>
-                  );
-                })}
+                  )}
+                  {vitalsDisplay.heart_rate != null && vitalsDisplay.heart_rate !== "" && (
+                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2 text-center">
+                      <p className="text-lg font-bold text-teal-900 font-mono">{vitalsDisplay.heart_rate}</p>
+                      <p className="text-[0.6rem] text-teal-600 uppercase">HR bpm</p>
+                    </div>
+                  )}
+                  {vitalsDisplay.respiratory_rate != null && vitalsDisplay.respiratory_rate !== "" && (
+                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2 text-center">
+                      <p className="text-lg font-bold text-teal-900 font-mono">{vitalsDisplay.respiratory_rate}</p>
+                      <p className="text-[0.6rem] text-teal-600 uppercase">RR /min</p>
+                    </div>
+                  )}
+                  {vitalsDisplay.temperature != null && vitalsDisplay.temperature !== "" && (
+                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2 text-center">
+                      <p className="text-lg font-bold text-teal-900 font-mono">
+                        {vitalsDisplay.temperature}
+                        {vitalsDisplay.temperature_unit === "celsius" ? " °C" : " °F"}
+                      </p>
+                      <p className="text-[0.6rem] text-teal-600 uppercase">Temp</p>
+                    </div>
+                  )}
+                  {vitalsDisplay.spo2 != null && vitalsDisplay.spo2 !== "" && (
+                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2 text-center">
+                      <p className="text-lg font-bold text-teal-900 font-mono">{vitalsDisplay.spo2}%</p>
+                      <p className="text-[0.6rem] text-teal-600 uppercase">SpO₂</p>
+                    </div>
+                  )}
+                  {vitalsDisplay.height != null && vitalsDisplay.height !== "" && (
+                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2 text-center">
+                      <p className="text-lg font-bold text-teal-900 font-mono">{vitalsDisplay.height}</p>
+                      <p className="text-[0.6rem] text-teal-600 uppercase">H cm</p>
+                    </div>
+                  )}
+                  {vitalsDisplay.weight != null && vitalsDisplay.weight !== "" && (
+                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2 text-center">
+                      <p className="text-lg font-bold text-teal-900 font-mono">{vitalsDisplay.weight}</p>
+                      <p className="text-[0.6rem] text-teal-600 uppercase">W kg</p>
+                    </div>
+                  )}
+                  {vitalsDisplay.bmi != null && vitalsDisplay.bmi !== "" && (
+                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2 text-center col-span-2">
+                      <p className="text-lg font-bold text-teal-900 font-mono">{vitalsDisplay.bmi}</p>
+                      <p className="text-[0.6rem] text-teal-600 uppercase">BMI</p>
+                    </div>
+                  )}
+                </div>
               </CardContent>
             </Card>
+
           </aside>
 
           <main className="flex-1 min-w-0 space-y-8">
+            <div className="flex flex-wrap gap-2 border-b border-teal-200 pb-2">
+              <button
+                type="button"
+                onClick={() => setReportTab("multimodal")}
+                className={cn(
+                  "px-4 py-2 text-sm font-medium rounded-t-md border-b-2 -mb-px transition-colors",
+                  reportTab === "multimodal"
+                    ? "border-teal-600 text-teal-900 bg-white/50"
+                    : "border-transparent text-teal-600 hover:text-teal-800"
+                )}
+              >
+                Multimodal analysis
+              </button>
+              <button
+                type="button"
+                onClick={() => setReportTab("ai")}
+                className={cn(
+                  "px-4 py-2 text-sm font-medium rounded-t-md border-b-2 -mb-px transition-colors",
+                  reportTab === "ai"
+                    ? "border-teal-600 text-teal-900 bg-white/50"
+                    : "border-transparent text-teal-600 hover:text-teal-800"
+                )}
+              >
+                AI diagnostic assessment
+              </button>
+            </div>
+
+            {reportTab === "ai" && <AiDiagnosticAssessmentPanel assessment={aiAssessment} />}
+
+            {reportTab === "multimodal" && (
+              <>
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
               <Card className="border-teal-200 bg-white/80 backdrop-blur overflow-hidden border-t-4 border-t-teal-900">
                 <CardContent className="pt-4">
@@ -622,18 +927,18 @@ export default function ReportSummary() {
                     </CardContent>
                   </Card>
                 </div>
-                {faceDerived.timeline && (
+                {faceDerived.emotionTimeline && (
                   <Card className="border-teal-200 bg-white/80 backdrop-blur">
                     <CardHeader className="pb-2">
                       <CardTitle className="text-xs font-mono uppercase tracking-wider text-teal-600">
-                        Emotion over time (windows)
+                        Emotion frequency over time (all emotions)
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
                       <div className={chartBoxTall}>
                         <Chart
-                          type="bar"
-                          data={faceDerived.timeline}
+                          type="line"
+                          data={faceDerived.emotionTimeline}
                           options={faceTimelineOptions}
                         />
                       </div>
@@ -712,6 +1017,32 @@ export default function ReportSummary() {
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
+                      <div className="flex items-center gap-2 mb-3 border-b border-teal-100 pb-2">
+                        <button
+                          type="button"
+                          onClick={() => setKeywordView("diagnostic")}
+                          className={cn(
+                            "text-xs px-2.5 py-1 rounded border transition-colors",
+                            keywordView === "diagnostic"
+                              ? "bg-amber-100 text-amber-900 border-amber-200"
+                              : "bg-white text-teal-700 border-teal-200 hover:bg-teal-50"
+                          )}
+                        >
+                          Diagnostic terms
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setKeywordView("all")}
+                          className={cn(
+                            "text-xs px-2.5 py-1 rounded border transition-colors",
+                            keywordView === "all"
+                              ? "bg-teal-100 text-teal-900 border-teal-200"
+                              : "bg-white text-teal-700 border-teal-200 hover:bg-teal-50"
+                          )}
+                        >
+                          Include non-diagnostic
+                        </button>
+                      </div>
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="border-b border-teal-200">
@@ -727,7 +1058,10 @@ export default function ReportSummary() {
                           </tr>
                         </thead>
                         <tbody>
-                          {audioDerived.kwSorted.map(([word, count]) => (
+                          {(keywordView === "diagnostic"
+                            ? audioDerived.kwSorted.filter(([word]) => audioDerived.diagSet.has(word))
+                            : audioDerived.kwSorted
+                          ).map(([word, count]) => (
                             <tr key={word} className="border-b border-teal-100">
                               <td className="py-1.5 text-teal-900">{word}</td>
                               <td className="py-1.5">
@@ -742,6 +1076,14 @@ export default function ReportSummary() {
                               </td>
                             </tr>
                           ))}
+                          {keywordView === "diagnostic" &&
+                            audioDerived.kwSorted.filter(([word]) => audioDerived.diagSet.has(word)).length === 0 && (
+                              <tr>
+                                <td colSpan={3} className="py-3 text-center text-xs text-teal-600">
+                                  No diagnostic terms detected in this sample window set.
+                                </td>
+                              </tr>
+                            )}
                         </tbody>
                       </table>
                     </CardContent>
@@ -917,6 +1259,8 @@ export default function ReportSummary() {
                 Back to dashboard
               </Link>
             </p>
+              </>
+            )}
           </main>
         </div>
       </div>

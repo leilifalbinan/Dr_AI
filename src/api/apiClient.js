@@ -174,12 +174,12 @@ const initializeDemoData = () => {
   if (patients.length === 0) {
     const demoPatient = {
       id: 'patient-demo-1',
-      first_name: 'Sarah',
-      last_name: 'Martinez',
-      date_of_birth: '1985-06-15',
-      gender: 'female',
-      medical_record_number: 'MRN-12345',
-      primary_diagnosis: 'Fibromyalgia',
+      first_name: 'Michael',
+      last_name: 'Reyes',
+      date_of_birth: '1962-09-21',
+      gender: 'male',
+      medical_record_number: 'MRN-CC-2048',
+      primary_diagnosis: 'Suspected Parkinson disease',
       created_date: '2025-01-15T10:00:00Z',
       updated_date: '2025-01-15T10:00:00Z'
     };
@@ -192,68 +192,82 @@ const initializeDemoData = () => {
       id: 'visit-demo-1',
       patient_id: 'patient-demo-1',
       visit_number: 1,
-      visit_date: '2025-10-30',
-      chief_complaint: 'Pain all over entire body',
-      transcription: 'I have pain all over my body - my joints ache, muscles are sore and stiff. Severe headache and nausea. I\'m dizzy when standing. Extreme fatigue and weakness. Can\'t sleep at night. My stomach hurts and I feel bloated. Everything aches and hurts constantly.',
+      visit_date: '2026-03-28',
+      chief_complaint: 'Progressive resting tremor, gait slowing, and stiffness',
+      bp_systolic: 132,
+      bp_diastolic: 78,
+      heart_rate: 74,
+      respiratory_rate: 16,
+      temperature: 98.4,
+      temperature_unit: 'fahrenheit',
+      spo2: 98,
+      height: 170,
+      weight: 70,
+      bmi: 24.2,
+      transcription: 'For about a year I have had a resting tremor in my right hand that is getting more noticeable. I am slower when walking, turning is difficult, and my family says I shuffle. I feel stiff, especially in the morning, and my handwriting has become smaller. My voice is softer and I feel more fatigued with daily tasks.',
       physician_notes: '',
       keyword_analysis: {
-        total_words: 48,
+        total_words: 66,
         diagnostic_keywords: {
-          pain: 5,
-          fatigue: 2,
-          weakness: 2,
-          nausea: 1,
-          dizzy: 1,
-          sleep: 1,
-          headache: 1,
-          joints: 1,
-          muscles: 1,
-          sore: 1,
-          stiff: 1,
-          stomach: 1,
-          hurts: 2,
-          bloated: 1
+          tremor: 4,
+          slow: 3,
+          walking: 3,
+          shuffle: 2,
+          stiffness: 2,
+          balance: 2,
+          handwriting: 1,
+          voice: 1,
+          fatigue: 2
         },
-        keyword_percentage: 27.1,
+        keyword_percentage: 28.7,
         top_keywords: [
-          { word: 'pain', count: 5, category: 'MUSCULOSKELETAL' },
-          { word: 'fatigue', count: 2, category: 'CONSTITUTIONAL' },
-          { word: 'weakness', count: 2, category: 'CONSTITUTIONAL' },
-          { word: 'nausea', count: 1, category: 'GASTROINTESTINAL' }
+          { word: 'tremor', count: 4, category: 'NEUROLOGIC' },
+          { word: 'slow walking', count: 3, category: 'MOTOR' },
+          { word: 'stiffness', count: 2, category: 'MOTOR' },
+          { word: 'fatigue', count: 2, category: 'CONSTITUTIONAL' }
         ]
       },
       sentiment_analysis: {
         overall_sentiment: 'negative',
-        sentiment_score: -0.85,
-        distress_level: 'high',
-        emotional_indicators: ['pain', 'fatigue', 'nausea', 'dizziness', 'discomfort', 'soreness', 'insomnia']
+        sentiment_score: -0.34,
+        distress_level: 'medium',
+        emotional_indicators: ['frustration', 'worry', 'fatigue', 'slowness']
       },
       semantic_analysis: {
-        key_themes: ['widespread pain', 'fatigue', 'nausea', 'sleep disturbances', 'gastrointestinal issues', 'dizziness'],
-        symptom_severity: 'severe',
-        functional_impact: 'severe',
-        temporal_patterns: 'chronic'
+        key_themes: ['resting tremor', 'bradykinesia', 'gait instability', 'rigidity', 'fine motor decline'],
+        symptom_severity: 'moderate',
+        functional_impact: 'moderate',
+        temporal_patterns: 'progressive'
       },
       ai_assessment: {
-        suggested_diagnoses: ['Fibromyalgia', 'Chronic Fatigue Syndrome (CFS)', 'Rheumatoid Arthritis'],
+        suggested_diagnoses: [
+          'Idiopathic Parkinson disease (early to moderate stage)',
+          'Parkinsonian syndrome requiring medication-response clarification',
+          'Essential tremor with gait dysfunction (less likely)'
+        ],
         recommended_tests: [
-          'Complete Blood Count (CBC)',
-          'Thyroid Function Tests (TFTs)',
-          'Erythrocyte Sedimentation Rate (ESR)',
-          'Comprehensive Metabolic Panel (CMP)',
-          'Autoantibody testing (ANA, rheumatoid factor)'
+          'Comprehensive neurologic exam with UPDRS scoring',
+          'MRI brain',
+          'DaTscan if diagnosis uncertain',
+          'CBC, CMP, TSH, vitamin B12',
+          'Formal physical therapy gait and balance assessment'
         ],
         treatment_suggestions: [
-          'Cognitive Behavioral Therapy (CBT)',
-          'Low-dose antidepressants (e.g., amitriptyline)',
-          'Physical therapy',
-          'Medications for pain management (e.g., NSAIDs, gabapentin)',
-          'Lifestyle modifications (diet, exercise)'
+          'Trial dopaminergic therapy (e.g., carbidopa-levodopa) as clinically appropriate',
+          'Physical and occupational therapy for gait and ADL support',
+          'Structured exercise and balance program',
+          'Fall-risk mitigation and home safety planning'
         ],
-        follow_up_recommendations: 'Schedule a follow-up appointment in 4-6 weeks to evaluate response to treatment and reassess symptoms.'
+        patient_education: [
+          'Track tremor, gait speed, and freezing episodes daily',
+          'Maintain hydration, regular sleep, and consistent exercise',
+          'Use assistive devices and remove home fall hazards',
+          'Seek urgent care for sudden neurologic decline or repeated falls'
+        ],
+        follow_up_recommendations: 'Neurology follow-up in 2-4 weeks to review progression and treatment response.'
       },
-      created_date: '2025-10-30T14:30:00Z',
-      updated_date: '2025-10-30T14:30:00Z'
+      created_date: '2026-03-28T14:30:00Z',
+      updated_date: '2026-03-28T14:30:00Z'
     };
     visits.push(demoVisit);
     saveToStorage(STORAGE_KEYS.VISITS, visits);

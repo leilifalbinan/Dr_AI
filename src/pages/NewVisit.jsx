@@ -14,6 +14,7 @@ import { ArrowLeft, FileText, Brain, Loader2, UserPlus, CheckCircle, XCircle, Cl
 import { compareAllModels, getConsensusResult, analyzeKeywords, analyzeSentiment, analyzeSemantics, extractPatientText } from "@/services/aiService";
 import { transcriptionService } from "@/services/transcriptionService";
 import { AudioJsonlLogger, makeRelativeTimer, parsePatientSegments } from "@/utils/jsonlLogger";
+import { demoFace, demoAudio, demoGait } from "@/data/reportSummaryDemoData";
 function formatTranscriptionForDisplay(text) {
   if (!text) return text;
   return text.replace(/Mic 1/g, "Patient").replace(/Mic 2/g, "Doctor");
@@ -250,7 +251,7 @@ export default function NewVisit() {
     },
     onSuccess: (visit) => {
       queryClient.invalidateQueries(['visits']);
-      navigate(createPageUrl(`VisitDetails?id=${visit.id}`));
+      navigate(createPageUrl(`ReportSummary?visitId=${visit.id}`));
     },
   });
 
@@ -317,10 +318,16 @@ export default function NewVisit() {
     setAnalysisProgress({ openai: 'running', ollama: 'running' });
 
     try {
-      const results = await compareAllModels(visitData, (model, status) => {
-        console.log(`${model}: ${status}`);
-        setAnalysisProgress(prev => ({ ...prev, [model]: status }));
-      });
+      const results = await compareAllModels(
+        {
+          ...visitData,
+          multimodal_jsonl: { face: demoFace, audio: demoAudio, gait: demoGait },
+        },
+        (model, status) => {
+          console.log(`${model}: ${status}`);
+          setAnalysisProgress(prev => ({ ...prev, [model]: status }));
+        }
+      );
 
       const consensus = await getConsensusResult(results, visitData.transcription);
 

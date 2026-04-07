@@ -1,6 +1,7 @@
 const OPENAI_API_KEY = import.meta.env.VITE_OPENAI_API_KEY;
 const OLLAMA_BASE_URL = import.meta.env.VITE_OLLAMA_URL || 'http://localhost:11434';
 
+import { buildMultimodalPromptAppendix } from '@/utils/multimodalJsonlSummary';
 import { pipeline, env } from '@xenova/transformers';
 env.allowRemoteModels = true;
 env.allowLocalModels = false;
@@ -462,6 +463,10 @@ const callOpenAI = async (visitData) => {
       clinicalContext += `\n\nPhysician's Clinical Observations:\n${visitData.physician_notes}`;
     }
   }
+
+  const multimodalAppendix = buildMultimodalPromptAppendix(
+    typeof visitData === 'object' && visitData ? visitData : {}
+  );
   
   const prompt = `You are a medical AI assistant. Analyze this patient information and provide:
 1. Suggested diagnoses (up to 3)
@@ -472,9 +477,9 @@ const callOpenAI = async (visitData) => {
 ${typeof visitData === 'object' && visitData.chief_complaint ? `Patient's Chief Complaint: ${visitData.chief_complaint}` : ''}
 
 Patient Transcription (Patient's Description):
-"${transcription}"${clinicalContext}
+"${transcription}"${clinicalContext}${multimodalAppendix}
 
-Consider ALL the above clinical information including symptoms, vital signs, measurements, and physician observations when making your assessment.
+Consider ALL the above clinical information including symptoms, vital signs, measurements, physician observations, and any multimodal sensor/NLP summaries when making your assessment.
 
 Respond in JSON format:
 {
@@ -560,6 +565,10 @@ const callOllama = async (visitData) => {
       clinicalContext += `\n\nPhysician's Clinical Observations:\n${visitData.physician_notes}`;
     }
   }
+
+  const multimodalAppendix = buildMultimodalPromptAppendix(
+    typeof visitData === 'object' && visitData ? visitData : {}
+  );
   
   const prompt = `You are a medical AI assistant. Analyze this patient information and provide:
 1. Suggested diagnoses (up to 3)
@@ -570,9 +579,9 @@ const callOllama = async (visitData) => {
 ${typeof visitData === 'object' && visitData.chief_complaint ? `Patient's Chief Complaint: ${visitData.chief_complaint}` : ''}
 
 Patient Transcription (Patient's Description):
-"${transcription}"${clinicalContext}
+"${transcription}"${clinicalContext}${multimodalAppendix}
 
-Consider ALL the above clinical information including symptoms, vital signs, measurements, and physician observations when making your assessment.
+Consider ALL the above clinical information including symptoms, vital signs, measurements, physician observations, and any multimodal sensor/NLP summaries when making your assessment.
 
 Respond in JSON format:
 {

@@ -14,6 +14,7 @@ export default function VisitDetails() {
   const navigate = useNavigate();
   const urlParams = new URLSearchParams(window.location.search);
   const visitId = urlParams.get('id');
+  const fromReport = urlParams.get('from') === 'report';
   const [showComparison, setShowComparison] = useState(false);
 
   const { data: visit, isLoading } = useQuery({
@@ -71,7 +72,11 @@ export default function VisitDetails() {
             <Button
               variant="outline"
               size="icon"
-              onClick={() => navigate(createPageUrl("Dashboard"))}
+              onClick={() =>
+                fromReport && visitId
+                  ? navigate(createPageUrl(`ReportSummary?visitId=${visitId}`))
+                  : navigate(createPageUrl("Dashboard"))
+              }
             >
               <ArrowLeft className="w-4 h-4" />
             </Button>
@@ -417,6 +422,22 @@ export default function VisitDetails() {
                       {visit.ai_assessment.treatment_suggestions.map((treatment, idx) => (
                         <div key={idx} className="text-slate-700 py-1">
                           {treatment}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {visit.ai_assessment.patient_education && visit.ai_assessment.patient_education.length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-3 pb-2 border-b-2 border-teal-200">
+                      <div className="w-2 h-2 rounded-full bg-teal-600"></div>
+                      <h4 className="font-semibold text-base text-slate-800">Patient Education</h4>
+                    </div>
+                    <div className="space-y-2 pl-4">
+                      {visit.ai_assessment.patient_education.map((item, idx) => (
+                        <div key={idx} className="text-slate-700 py-1">
+                          {item}
                         </div>
                       ))}
                     </div>
