@@ -14,8 +14,7 @@ import { preloadSentimentModel } from '@/services/aiService';
 
 const queryClient = new QueryClient();
 
-function App() {  // ← Only ONE function declaration
-  // Pre-load sentiment model in background
+function App() {
   useEffect(() => {
     preloadSentimentModel().then(success => {
       if (success) {
@@ -31,10 +30,8 @@ function App() {  // ← Only ONE function declaration
       <Router>
         <AuthProvider>
           <Routes>
-            {/* Public Routes*/}
             <Route path="/login" element={<Login />} />
-            
-            {/* Protected Routes */}
+
             <Route
               path="/dashboard"
               element={
@@ -45,6 +42,7 @@ function App() {  // ← Only ONE function declaration
                 </ProtectedRoute>
               }
             />
+
             <Route
               path="/patients"
               element={
@@ -55,6 +53,7 @@ function App() {  // ← Only ONE function declaration
                 </ProtectedRoute>
               }
             />
+
             <Route
               path="/new-visit"
               element={
@@ -65,6 +64,7 @@ function App() {  // ← Only ONE function declaration
                 </ProtectedRoute>
               }
             />
+
             <Route
               path="/visit-details"
               element={
@@ -75,6 +75,7 @@ function App() {  // ← Only ONE function declaration
                 </ProtectedRoute>
               }
             />
+
             <Route
               path="/patient-analysis"
               element={
@@ -85,11 +86,8 @@ function App() {  // ← Only ONE function declaration
                 </ProtectedRoute>
               }
             />
-            
-            {/* Redirect root to login */}
+
             <Route path="/" element={<Navigate to="/login" replace />} />
-            
-            {/* redirect to login */}
             <Route path="*" element={<Navigate to="/login" replace />} />
           </Routes>
         </AuthProvider>
