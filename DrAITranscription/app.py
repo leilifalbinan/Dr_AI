@@ -439,7 +439,311 @@ def handle_connect():
 def handle_disconnect():
     print('Client disconnected')
 
+
+# ====== Visit Management Endpoints ======
+import json
+import shutil
+from pathlib import Path
+from datetime import datetime
+
+RUNS_DIR = Path("runs")
+
+@app.route('/api/visits/<visit_id>/create', methods=['POST'])
+def create_visit(visit_id):
+    data = request.get_json(silent=True) or {}
+    visit_dir = RUNS_DIR / f"visit_{visit_id}"
+    visit_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "schema_version": "v0.1",
+        "visit_id": visit_id,
+        "patient_id": data.get("patient_id", ""),
+        "created_utc": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "expected_subsystems": ["audio", "face", "gait"],
+        "status": {"audio": "pending", "face": "pending", "gait": "pending"}
+    }
+    with open(visit_dir / "manifest.json", "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+    print(f"[Visit] Created visit folder: {visit_dir}")
+    return jsonify({"status": "ok", "visit_id": visit_id})
+
+
+@app.route('/api/visits/<visit_id>/logs/audio', methods=['POST'])
+def save_audio_log(visit_id):
+    visit_dir = RUNS_DIR / f"visit_{visit_id}"
+    visit_dir.mkdir(parents=True, exist_ok=True)
+    audio_path = visit_dir / "audio.jsonl"
+
+    # Accept both JSONL (x-ndjson) and JSON array formats
+    content_type = request.content_type or ""
+    raw = request.get_data(as_text=True)
+
+    records = []
+    if "ndjson" in content_type or "jsonl" in content_type or "\n" in raw:
+        for line in raw.splitlines():
+            line = line.strip()
+            if line:
+                try:
+                    records.append(json.loads(line))
+                except Exception:
+                    pass
+    else:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                records = parsed
+            elif isinstance(parsed, dict):
+                records = [parsed]
+        except Exception:
+            pass
+
+    with open(audio_path, "w", encoding="utf-8") as f:
+        for record in records:
+            f.write(json.dumps(record) + "\n")
+
+    manifest_path = visit_dir / "manifest.json"
+    if manifest_path.exists():
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+            manifest["status"]["audio"] = "done"
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                json.dump(manifest, f, indent=2)
+        except Exception:
+            pass
+
+    print(f"[Visit] Audio JSONL saved → {audio_path} ({len(records)} records)")
+    return jsonify({"status": "ok", "records": len(records)})
+
+
+@app.route('/api/visits/rename', methods=['POST'])
+def rename_visit_folder():
+    data = request.get_json(silent=True) or {}
+    old_id = data.get("from")
+    new_id = data.get("to")
+    if not old_id or not new_id:
+        return jsonify({"error": "missing from/to"}), 400
+    old_dir = RUNS_DIR / f"visit_{old_id}"
+    new_dir = RUNS_DIR / f"visit_{new_id}"
+    if old_dir.exists():
+        new_dir.mkdir(parents=True, exist_ok=True)
+        for file in old_dir.iterdir():
+            shutil.copy2(str(file), str(new_dir / file.name))
+        print(f"[Visit] Copied folder: {old_dir} → {new_dir}")
+    return jsonify({"status": "ok"})
+
+
+@app.route('/api/visits/<visit_id>/report', methods=['GET'])
+def get_report(visit_id):
+    visit_dir = RUNS_DIR / f"visit_{visit_id}"
+    report_path = visit_dir / "report.json"
+    if report_path.exists():
+        with open(report_path, "r", encoding="utf-8") as f:
+            return jsonify(json.load(f))
+    result = {
+        "visit_id": visit_id,
+        "partial": True,
+        "sections": {},
+        "availability": {"audio": "pending", "face": "pending", "gait": "pending"}
+    }
+    audio_path = visit_dir / "audio.jsonl"
+    if audio_path.exists():
+        try:
+            records = [json.loads(line) for line in audio_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            summary = next((r for r in records if r.get("type") == "summary"), None)
+            windows = [r for r in records if r.get("type") == "window"]
+            result["sections"]["audio"] = {"summary": summary, "windows": windows, "record_count": len(records)}
+            result["availability"]["audio"] = "available"
+        except Exception as e:
+            print(f"[Report] Error reading audio.jsonl: {e}")
+    face_path = visit_dir / "face.jsonl"
+    if face_path.exists():
+        try:
+            records = [json.loads(line) for line in face_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            summary = next((r for r in records if r.get("type") == "summary"), records[0] if records else None)
+            result["sections"]["face"] = summary
+            result["availability"]["face"] = "available"
+        except Exception as e:
+            print(f"[Report] Error reading face.jsonl: {e}")
+    gait_path = visit_dir / "gait.jsonl"
+    if gait_path.exists():
+        try:
+            records = [json.loads(line) for line in gait_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            summary = next((r for r in records if r.get("type") == "summary"), records[0] if records else None)
+            result["sections"]["gait"] = summary
+            result["availability"]["gait"] = "available"
+        except Exception as e:
+            print(f"[Report] Error reading gait.jsonl: {e}")
+    return jsonify(result)
+
+
+@app.route('/api/visits/<visit_id>/status', methods=['GET'])
+def get_visit_status(visit_id):
+    visit_dir = RUNS_DIR / f"visit_{visit_id}"
+    manifest_path = visit_dir / "manifest.json"
+    if manifest_path.exists():
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            return jsonify(json.load(f))
+    return jsonify({"error": "Visit not found"}), 404
+
+
+
+@app.route('/api/visits/<visit_id>/integrate', methods=['POST'])
+def integrate_visit(visit_id):
+    """
+    Run the integrator for a visit — merges audio.jsonl + face.jsonl + gait.jsonl
+    into a unified report.json.  Called automatically after all subsystems complete,
+    or manually triggered from VisitDetails.
+    """
+    import sys
+    visit_dir = RUNS_DIR / f"visit_{visit_id}"
+    if not visit_dir.exists():
+        return jsonify({"error": "Visit folder not found"}), 404
+
+    availability = {"audio": "pending", "face": "pending", "gait": "pending"}
+    sections = {}
+
+    def load_jsonl(path):
+        if not path.exists():
+            return []
+        records = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
+                try:
+                    records.append(json.loads(line))
+                except Exception:
+                    pass
+        return records
+
+    def get_summary(records):
+        for r in records:
+            if r.get("type") == "summary":
+                return r
+        return records[-1] if records else None
+
+    # Audio
+    audio_records = load_jsonl(visit_dir / "audio.jsonl")
+    if audio_records:
+        summary = get_summary(audio_records)
+        windows = [r for r in audio_records if r.get("type") == "window"]
+        features = summary.get("features", {}) if summary else {}
+
+        distress_levels = []
+        all_emotional_indicators = set()
+        sentiment_per_window = []
+        all_terms = {}
+
+        for w in windows:
+            wf = w.get("features", {})
+            sentiment = wf.get("sentiment", {}) or wf.get("sentiment_analysis", {})
+            dl = sentiment.get("distress_level")
+            if dl:
+                distress_levels.append(dl)
+            for ind in (sentiment.get("emotional_indicators") or []):
+                all_emotional_indicators.add(ind)
+            polarity = sentiment.get("polarity") or sentiment.get("sentiment_score")
+            if polarity is not None:
+                sentiment_per_window.append(polarity)
+            dt = wf.get("diagnostic_terms", {})
+            if isinstance(dt, dict):
+                for item in dt.get("matches", []):
+                    if isinstance(item, (list, tuple)) and len(item) == 2:
+                        all_terms[item[0]] = item[1]
+            elif isinstance(dt, list):
+                for item in dt:
+                    if isinstance(item, (list, tuple)) and len(item) == 2:
+                        all_terms[item[0]] = item[1]
+
+        distress_priority = {"high": 3, "medium": 2, "low": 1}
+        overall_distress = max(distress_levels, key=lambda d: distress_priority.get(d, 0)) if distress_levels else "low"
+
+        trajectory = "stable"
+        if len(sentiment_per_window) >= 3:
+            half = len(sentiment_per_window) // 2
+            first_half = sum(sentiment_per_window[:half]) / half
+            second_half = sum(sentiment_per_window[half:]) / (len(sentiment_per_window) - half)
+            diff = second_half - first_half
+            if diff > 0.15:
+                trajectory = "improving"
+            elif diff < -0.15:
+                trajectory = "worsening"
+
+        sections["audio"] = {
+            "type": "summary", "subsystem": "audio",
+            "t_start": summary.get("t_start") if summary else None,
+            "t_end": summary.get("t_end") if summary else None,
+            "total_words": features.get("total_words", 0),
+            "total_windows": features.get("total_windows", len(windows)),
+            "avg_sentiment_polarity": features.get("avg_sentiment_polarity"),
+            "distress_level": overall_distress,
+            "distress_trajectory": trajectory,
+            "emotional_indicators": sorted(all_emotional_indicators),
+            "top_words": features.get("top_words", []),
+            "top_topics": features.get("top_topics", []),
+            "diagnostic_terms": list(all_terms.items()),
+            "record_count": len(audio_records),
+            "windows": windows,
+            "summary": summary,
+        }
+        availability["audio"] = "available"
+        print(f"[Integrator] Audio: distress={overall_distress}, indicators={sorted(all_emotional_indicators)}")
+
+    # Face
+    face_records = load_jsonl(visit_dir / "face.jsonl")
+    if face_records:
+        summary = get_summary(face_records)
+        features = summary.get("features", {}) if summary else {}
+        emotion_pct = features.get("emotion_pct", {})
+        dominant = max(emotion_pct.items(), key=lambda kv: kv[1])[0] if emotion_pct else None
+        sections["face"] = {
+            "type": "summary", "subsystem": "face",
+            "t_start": summary.get("t_start") if summary else None,
+            "t_end": summary.get("t_end") if summary else None,
+            "total_samples": features.get("total_samples", 0),
+            "dominant_emotion": dominant,
+            "emotion_pct": emotion_pct,
+            "emotion_counts": features.get("emotion_counts", {}),
+            "model_version": summary.get("model_version") if summary else None,
+            "features": features,
+        }
+        availability["face"] = "available"
+
+    # Gait
+    gait_records = load_jsonl(visit_dir / "gait.jsonl")
+    if gait_records:
+        summary = get_summary(gait_records)
+        sections["gait"] = summary or {}
+        availability["gait"] = "available"
+
+    # Extract IDs
+    visit_id_clean = visit_id
+    patient_id = None
+    for rec in (audio_records + face_records + gait_records):
+        if rec.get("patient_id"):
+            patient_id = rec["patient_id"]
+            break
+
+    report = {
+        "schema_version": "v0.1",
+        "generated_utc": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "visit_id": visit_id_clean,
+        "patient_id": patient_id,
+        "partial": any(v == "pending" for v in availability.values()),
+        "availability": availability,
+        "sections": sections,
+    }
+
+    report_path = visit_dir / "report.json"
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2)
+
+    print(f"[Integrator] report.json written for visit_{visit_id}")
+    print(f"[Integrator] Availability: {availability}")
+    return jsonify({"status": "ok", "availability": availability})
+
 # ====== Main ======
 if __name__ == '__main__':
+    RUNS_DIR.mkdir(parents=True, exist_ok=True)
     print("Starting transcription server on http://localhost:5000")
+    print(f"Visit artifacts will be saved to: {RUNS_DIR.resolve()}")
     socketio.run(app, host='0.0.0.0', port=5000, debug=True, allow_unsafe_werkzeug=True)
