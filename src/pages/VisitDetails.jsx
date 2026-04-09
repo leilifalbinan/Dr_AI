@@ -550,6 +550,56 @@ export default function VisitDetails() {
           </Card>
         )}
 
+        {/* Gait Analysis Card */}
+        {visit.gait_summary && (
+          <Card className="bg-white border-none shadow-lg mb-6">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Activity className="w-5 h-5" />
+                Gait Analysis
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
+                <div className="p-4 bg-slate-50 rounded-lg">
+                  <div className="text-sm text-slate-500">Speed</div>
+                  <div className="text-xl font-semibold">
+                    {visit.gait_summary.mean_speed_mps != null ? `${Number(visit.gait_summary.mean_speed_mps).toFixed(2)} m/s` : 'N/A'}
+                  </div>
+                </div>
+                <div className="p-4 bg-slate-50 rounded-lg">
+                  <div className="text-sm text-slate-500">Cadence</div>
+                  <div className="text-xl font-semibold">
+                    {visit.gait_summary.cadence_spm != null ? `${Number(visit.gait_summary.cadence_spm).toFixed(1)} spm` : 'N/A'}
+                  </div>
+                </div>
+                <div className="p-4 bg-slate-50 rounded-lg">
+                  <div className="text-sm text-slate-500">Steps</div>
+                  <div className="text-xl font-semibold">
+                    {visit.gait_summary.num_steps_est ?? 'N/A'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-2 text-sm">
+                <div><span className="font-medium">Summary:</span> {visit.gait_summary_text || visit.gait_summary.summary_text || 'N/A'}</div>
+                <div><span className="font-medium">Knee symmetry index:</span> {visit.gait_summary.knee_symmetry_index_percent != null ? `${Number(visit.gait_summary.knee_symmetry_index_percent).toFixed(1)}%` : 'N/A'}</div>
+                <div><span className="font-medium">AP stability RMS:</span> {visit.gait_summary.stability_ap_rms_m != null ? `${Number(visit.gait_summary.stability_ap_rms_m).toFixed(3)} m` : 'N/A'}</div>
+                <div><span className="font-medium">ML stability RMS:</span> {visit.gait_summary.stability_ml_rms_m != null ? `${Number(visit.gait_summary.stability_ml_rms_m).toFixed(3)} m` : 'N/A'}</div>
+                <div><span className="font-medium">Sit-to-stand:</span> {visit.gait_summary.sit_to_stand_detected ? 'Detected' : 'Not detected'}</div>
+              </div>
+
+              {visit.gait_overlay_video_url && (
+                <video
+                  controls
+                  className="w-full mt-4 rounded-lg border"
+                  src={visit.gait_overlay_video_url}
+                />
+              )}
+            </CardContent>
+          </Card>
+        )}
+
         {/* Transcription Card */}
         {visit.transcription && (
           <Card className="bg-white border-none shadow-lg mb-6">
