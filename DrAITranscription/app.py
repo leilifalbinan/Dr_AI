@@ -610,7 +610,7 @@ def create_visit(visit_id):
             "expected_subsystems": ["audio", "face", "gait"],
             "status": {"audio": "pending", "face": "pending", "gait": "pending"}
         }
-        with open(visit_dir / "manifest.json", "w", encoding="utf-8") as f:
+        with open(manifest_path, "w", encoding="utf-8") as f:
             json.dump(manifest, f, indent=2)
             
     print(f"[Visit] Created visit folder: {visit_dir}")
