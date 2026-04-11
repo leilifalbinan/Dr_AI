@@ -74,14 +74,15 @@ Once started, the app should automatically open in your browser at:
    **Terminal 2 - Start Transcription Server:**
    ```bash
    cd DrAITranscription
-   .\venv\Scripts\Activate.ps1  # Windows
-   # or source venv/bin/activate  # Mac/Linux
    pip install -r requirements.txt
-   python app.py
+   py -3.11 app.py  # Windows
+   # or python3 app.py  # Mac/Linux
    ```
    
    The transcription server will run on `http://localhost:5000`
    
+   Note: the committed `venv_transcription` folder is not portable across machines, so recreate the environment locally instead of relying on it.
+
    See `DrAITranscription/SETUP.md` for detailed setup instructions.
 
 ---

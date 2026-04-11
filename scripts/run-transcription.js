@@ -4,7 +4,6 @@
  * Uses the venv in DrAITranscription if present, otherwise system python.
  */
 import { spawn } from 'child_process';
-import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -12,18 +11,19 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
 const transcriptionDir = path.join(repoRoot, 'DrAITranscription');
 const isWin = process.platform === 'win32';
-const venvPython = path.join(
-  transcriptionDir,
-  isWin ? 'venv\\Scripts\\python.exe' : 'venv/bin/python'
-);
 const appPy = path.join(transcriptionDir, 'app.py');
 
-const python = fs.existsSync(venvPython) ? venvPython : 'python';
+const python = isWin ? 'py' : 'python3';
+const pythonArgs = isWin ? ['-3.11', '-u', appPy] : ['-u', appPy];
 
-const child = spawn(python, [appPy], {
+const child = spawn(python, pythonArgs, {
   cwd: transcriptionDir,
   stdio: 'inherit',
-  shell: isWin,
+  shell: false,
+  env: {
+    ...process.env,
+    PYTHONUNBUFFERED: '1',
+  },
 });
 
 child.on('error', (err) => {
