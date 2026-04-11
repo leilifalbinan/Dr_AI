@@ -395,9 +395,4 @@ If I were choosing the path for your team, I would commit to this:
 
 That is the strongest path to a complete working system in 3.5 weeks.
 
-If you want, I can next turn this into a **task board format** with columns like:
 
-* Backend
-* Frontend
-* Nice-to-have
-* Demo-critical

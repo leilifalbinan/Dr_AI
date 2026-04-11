@@ -550,11 +550,19 @@ def stop_face_analysis():
         return jsonify({"error": f"No active face analysis for visit {visit_id}"}), 404
 
     try:
+        visit_dir = RUNS_DIR / f"visit_{visit_id}"
+        stop_file = visit_dir / "stop_face.txt"
+
+        # Ask the face script to exit gracefully
+        stop_file.write_text("stop", encoding="utf-8")
+        print(f"[Face] Stop signal written for visit {visit_id}")
+
+        # Give the process a few seconds to exit cleanly
         if proc.poll() is None:
-            proc.terminate()
             try:
-                proc.wait(timeout=5)
+                proc.wait(timeout=8)
             except subprocess.TimeoutExpired:
+                print(f"[Face] Graceful stop timed out for visit {visit_id}; killing process")
                 proc.kill()
                 proc.wait(timeout=5)
 

@@ -16,3 +16,146 @@ python ./emotion_pipeline/webcam_emotion_mediapipe.py --visit_id V001 --patient_
 
 
 python ./integration/integrator/integrator.py --visit_dir ./runs/visit_V001
+
+Nice — that’s a big milestone 👍
+Here’s a **clean, minimal run guide** you can give your team.
+
+---
+
+# 🚀 Doctor AI — How to Run (with Face Analysis)
+
+## 🧩 One-time setup (IMPORTANT)
+
+Face analysis uses a separate Python environment.
+
+👉 You **must tell Flask where it is** using `FACE_PYTHON_EXE`.
+
+### In PowerShell (every time before running backend):
+
+```powershell
+$env:FACE_PYTHON_EXE="C:\Users\seanr\Projects\Dr_AI\.venv_face\Scripts\python.exe"
+```
+
+---
+
+## ▶️ Step-by-step run
+
+### 1. Start backend (Flask)
+
+```powershell
+cd DrAITranscription
+.\.venv_transcription_new\Scripts\activate   # or your backend venv
+$env:FACE_PYTHON_EXE="C:\Users\seanr\Projects\Dr_AI\.venv_face\Scripts\python.exe"
+python app.py
+```
+
+👉 Runs on:
+`http://localhost:5000`
+
+---
+
+### 2. Start frontend (React)
+
+Open a new terminal:
+
+```powershell
+cd smart-exam-room
+npm run dev
+```
+
+👉 Runs on:
+`http://localhost:5174`
+
+---
+
+## 🧪 Using the system
+
+### Start a visit
+
+1. Open `http://localhost:5174`
+2. Click **New Visit**
+3. Select a patient
+
+---
+
+### Run facial analysis
+
+1. Click **Start Face Analysis**
+2. Webcam window opens (OpenCV)
+3. Let it run
+4. Click **Stop Face Analysis** (in UI)
+
+👉 The system will:
+
+* stop the script cleanly
+* save results to `runs/visit_<id>/face.jsonl`
+* update `manifest.json`
+
+---
+
+### Finish visit
+
+1. Click **Analyze Visit**
+2. Open **Visit Details**
+3. View Face results in the **Face tab**
+
+---
+
+## ⚠️ Common issue (IMPORTANT)
+
+### ❌ Error:
+
+```
+ModuleNotFoundError: No module named 'cv2'
+```
+
+### ✅ Fix:
+
+You forgot to set:
+
+```powershell
+$env:FACE_PYTHON_EXE=...
+```
+
+---
+
+## 🧠 What’s happening under the hood
+
+* React → UI
+* Flask → orchestrator
+* Face script runs in `.venv_face`
+* Communication via:
+
+  * subprocess launch
+  * `stop_face.txt`
+  * `manifest.json`
+
+---
+
+## 💡 Optional improvement (later)
+
+To avoid setting the env variable every time, you can:
+
+* add it to a `.env` file
+* or create a `run_backend.ps1` script
+
+---
+
+## ✅ TL;DR (super short version)
+
+```powershell
+# Terminal 1
+cd DrAITranscription
+.\.venv_transcription_new\Scripts\activate
+$env:FACE_PYTHON_EXE="C:\Users\seanr\Projects\Dr_AI\.venv_face\Scripts\python.exe"
+python app.py
+
+# Terminal 2
+cd smart-exam-room
+npm run dev
+```
+
+---
+
+If you want next, I can help you turn this into a **one-click script** so your teammates don’t even have to remember the env variable.
+
