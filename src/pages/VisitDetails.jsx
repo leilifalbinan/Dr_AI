@@ -121,7 +121,10 @@ function SubsystemReport({ visitId }) {
               Copy
             </button>
           </div>
-          <p className="text-xs font-semibold text-slate-700 mt-2 mb-1">Run face analysis :</p>
+          <p className="text-xs font-semibold text-slate-700 mt-2 mb-1">Manual fallback:</p>
+          <p className="text-xs text-slate-500 mt-2">
+            Normally, face analysis should be started from the New Visit page.
+          </p>
           <pre className="text-xs bg-white border border-slate-200 rounded px-2 py-1 text-slate-600 whitespace-pre-wrap select-all">
 {`python emotion_pipeline/webcam_emotion_mediapipe.py --visit_id ${visitId} --patient_id <patient_id> --runs_dir DrAITranscription/runs`}
           </pre>

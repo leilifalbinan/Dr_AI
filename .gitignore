@@ -8,7 +8,11 @@
 venv/
 venv_training/
 venv_runtime/
+.venv_runtime/
 env/
+.venv_face/
+.venv_backend/
+.venv_transc/
 
 # --------------------------
 # Python bytecode/cache

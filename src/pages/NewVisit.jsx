@@ -68,6 +68,10 @@ export default function NewVisit() {
   const animationRef = useRef(null);
   const [camerasActive, setCamerasActive] = useState(false);
 
+  // Face refs/state
+  const [isFaceRunning, setIsFaceRunning] = useState(false);
+  const [faceError, setFaceError] = useState(null);
+
   // Gait refs/state
   const [isGaitRunning, setIsGaitRunning] = useState(false);
   const [gaitSummary, setGaitSummary] = useState(null);
@@ -99,7 +103,7 @@ export default function NewVisit() {
     transcriptionService.connect().catch(() => {});
   }, [isGaitRunning]);
 
-  // Cleanup transcription on unmount
+  // Cleanup transcription, face, gait on unmount
   useEffect(() => {
     return () => {
       if (isTranscribing) {
@@ -117,6 +121,15 @@ export default function NewVisit() {
         if (animationRef.current) {
           cancelAnimationFrame(animationRef.current);
         }
+
+        if (selectedPatientId && isFaceRunning) {
+          fetch('http://localhost:5000/api/face/stop', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ visit_id: selectedPatientId })
+          }).catch(() => {});
+        }
+
         if (isGaitRunning) {
           fetch('/api/gait/stop', { method: 'POST' }).catch(() => {});
         }
@@ -200,6 +213,70 @@ export default function NewVisit() {
 
     return parts.length > 0 ? `Gait analysis: ${parts.join(', ')}.` : 'Gait analysis completed.';
   };
+
+  //====== Face analysis handlers =====================
+
+  const handleStartFace = async () => {
+  if (!selectedPatientId) {
+    alert("Please select a patient before starting facial analysis.");
+    return;
+  }
+
+  try {
+    setFaceError(null);
+
+    // Ensure visit folder exists before launching face pipeline
+    await fetch(`http://localhost:5000/api/visits/${selectedPatientId}/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ patient_id: selectedPatientId })
+    });
+
+    startManifestPolling(selectedPatientId);
+
+    const res = await fetch('http://localhost:5000/api/face/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        visit_id: selectedPatientId,
+        patient_id: selectedPatientId
+      })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to start face analysis');
+    }
+
+    setIsFaceRunning(true);
+  } catch (err) {
+    console.error(err);
+    setFaceError(err.message || 'Failed to start facial analysis');
+    setIsFaceRunning(false);
+  }
+};
+
+const handleStopFace = async () => {
+  try {
+    const res = await fetch('http://localhost:5000/api/face/stop', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ visit_id: selectedPatientId })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to stop face analysis');
+    }
+
+    setIsFaceRunning(false);
+  } catch (err) {
+    console.error(err);
+    setFaceError(err.message || 'Failed to stop facial analysis');
+  }
+};
+
+  //====== Gait analysis handlers======================
 
   const handleStartGait = async () => {
     try {
@@ -411,7 +488,10 @@ export default function NewVisit() {
         const r = await fetch(`http://localhost:5000/api/visits/${activeVisitIdRef.current}/status`);
         if (r.ok) {
           const data = await r.json();
-          if (data.status) setManifestStatus(data.status);
+          if (data.status) {
+            setManifestStatus(data.status);
+            setIsFaceRunning(data.status.face === 'running');
+          } 
         }
       } catch {}
     }, 3000);
@@ -823,13 +903,6 @@ export default function NewVisit() {
                 <FileText className="w-4 h-4" />
                 Live Monitoring
               </CardTitle>
-              <div className="flex items-center gap-2">
-                {!camerasActive ? (
-                  <Button size="sm" variant="outline" onClick={startCameras} className="border-teal-200">Start Facial Camera</Button>
-                ) : (
-                  <Button size="sm" variant="destructive" onClick={stopCameras}>Stop Facial Camera</Button>
-                )}
-              </div>
             </div>
           </CardHeader>
           <CardContent>
@@ -873,22 +946,61 @@ export default function NewVisit() {
                   </div>
                 )}
               </div>
-
+              {/* Facial analysis section */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <h4 className="text-sm font-semibold text-teal-900">Facial Analysis</h4>
-                  <span className="text-xs text-gray-500">{camerasActive ? 'Live' : 'Idle'}</span>
+                  <span className="text-xs text-gray-500">
+                     {manifestStatus.face === 'done'
+                        ? 'Completed'
+                        : isFaceRunning
+                        ? 'Running'
+                        : camerasActive
+                        ? 'Preview Only'
+                        : 'Idle'}
+                  </span>
                 </div>
+
+                {/* Video preview*/}
                 <div className="relative bg-black rounded overflow-hidden" style={{aspectRatio: '4/3'}}>
                   <video ref={video2Ref} className="w-full h-full object-cover" playsInline muted />
                   <canvas ref={canvas2Ref} className="absolute inset-0 w-full h-full pointer-events-none" />
                 </div>
-                <p className="text-xs text-gray-600">Webcam preview for facial analysis. Your gait feed now comes from the RealSense backend.</p>
+
+                <div className="flex flex-wrap gap-2">
+                  {!camerasActive ? (
+                    <Button size="sm" variant="outline" onClick={startCameras} className="border-teal-200">
+                      Start Camera Preview
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="outline" onClick={stopCameras}>
+                      Stop Camera Preview
+                    </Button>
+                  )}
+
+                  {!isFaceRunning ? (
+                    <Button size="sm" onClick={handleStartFace}>
+                      Start Face Analysis
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="destructive" onClick={handleStopFace}>
+                      Stop Face Analysis
+                    </Button>
+                  )}
+                </div>
+
+                <p className="text-xs text-gray-600">
+                  Camera preview is local to the browser. Face analysis runs in the Python backend and writes results into the visit folder.
+                </p>
+
+                {faceError && (
+                  <p className="text-xs text-red-600">{faceError}</p>
+                )}
               </div>
             </div>
           </CardContent>
         </Card>
-
+        
         <Card className="border-teal-200 bg-white/80 backdrop-blur mb-4 mt-4">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base text-teal-900">

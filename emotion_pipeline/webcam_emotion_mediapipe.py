@@ -36,7 +36,7 @@ from common_utils.orchestrator_utils import update_manifest_status
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-CHECKPOINT_PATH = PROJECT_ROOT / "models" / "facial_analysis" / "master_dataset_5class_v1.pth"
+CHECKPOINT_PATH = PROJECT_ROOT / "models" / "emotion" / "best_model.pth"
 
 EMOTION_LABELS = ["Angry", "Disgust", "Happy", "LowAffect", "Arousal"]
 NUM_CLASSES = len(EMOTION_LABELS)
@@ -173,6 +173,9 @@ def main():
         visit_dir = runs_dir / f"visit_{visit_id}"
         visit_dir.mkdir(parents=True, exist_ok=True)
     
+    # Create stop file path for signaling when to stop the face subsystem
+    stop_file = visit_dir / "stop_face.txt"
+    
     # Read t0 from manifest if available, otherwise use current time
     t0, using_orchestrator = get_visit_t0(visit_dir)
 
@@ -209,7 +212,7 @@ def main():
         model_selection=0,
         min_detection_confidence=0.5
     ) as face_detection:
-    
+
         while True:
             frame_start = time.time()
             ret, frame = cap.read()
@@ -268,11 +271,22 @@ def main():
             
             cv2.imshow("Webcam Emotion (Mediapipe + ResNet34)", frame)
 
+            # Check for stop signal 
+            if stop_file.exists():
+                print("[INFO] Stop signal detected. Ending face subsystem.")
+                break
+
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 
         cap.release()
         cv2.destroyAllWindows()
+        
+        if stop_file.exists():
+            try:
+                stop_file.unlink()
+            except Exception as e:
+                print(f"[WARN] Could not remove stop signal file: {e}")
 
         face_end_abs = time.time()
         face_duration = face_end_abs - face_start_abs

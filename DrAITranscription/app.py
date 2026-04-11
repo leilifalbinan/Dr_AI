@@ -10,6 +10,13 @@ import time
 import os
 import wave
 import tempfile
+import subprocess
+import sys
+
+import json
+import shutil
+from pathlib import Path
+from datetime import datetime
 
 # Optional: use faster_whisper if installed
 try:
@@ -44,8 +51,10 @@ app = Flask(__name__)
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# Store active transcription sessions
+# Store active transcription, face analysis sessions
 active_sessions = {}
+
+active_face_processes = {}
 
 # ====== Audio Helpers ======
 def save_wav_file(audio_data, samplerate, channels):
@@ -362,6 +371,26 @@ class TranscriptionSession:
             except Exception:
                 pass
 
+#=========face analysis helpers=====================
+
+def get_repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+def get_face_script_path() -> Path:
+    return get_repo_root() / "emotion_pipeline" / "webcam_emotion_mediapipe.py"
+
+def get_face_python_executable() -> str:
+    # Optional override if the face pipeline needs a different venv
+    return os.environ.get("FACE_PYTHON_EXE", sys.executable)
+
+def cleanup_dead_face_processes():
+    dead = []
+    for visit_id, proc in active_face_processes.items():
+        if proc.poll() is not None:
+            dead.append(visit_id)
+    for visit_id in dead:
+        active_face_processes.pop(visit_id, None)
+
 # ====== Flask API ======
 @app.route('/api/transcription/start', methods=['POST'])
 def start_transcription():
@@ -439,12 +468,129 @@ def handle_connect():
 def handle_disconnect():
     print('Client disconnected')
 
+#=======Face Analysis Endpoints =========
+
+@app.route('/api/face/start', methods=['POST'])
+def start_face_analysis():
+    cleanup_dead_face_processes()
+
+    data = request.get_json(silent=True) or {}
+    visit_id = data.get("visit_id")
+    patient_id = data.get("patient_id")
+
+    if not visit_id or not patient_id:
+        return jsonify({"error": "visit_id and patient_id are required"}), 400
+
+    if visit_id in active_face_processes:
+        proc = active_face_processes[visit_id]
+        if proc.poll() is None:
+            return jsonify({"error": f"Face analysis already running for visit {visit_id}"}), 400
+        active_face_processes.pop(visit_id, None)
+
+    visit_dir = RUNS_DIR / f"visit_{visit_id}"
+    visit_dir.mkdir(parents=True, exist_ok=True)
+
+    manifest_path = visit_dir / "manifest.json"
+    if not manifest_path.exists():
+        manifest = {
+            "schema_version": "v0.1",
+            "visit_id": visit_id,
+            "patient_id": patient_id,
+            "created_utc": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "expected_subsystems": ["audio", "face", "gait"],
+            "status": {"audio": "pending", "face": "pending", "gait": "pending"},
+        }
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2)
+
+    face_script = get_face_script_path()
+    if not face_script.exists():
+        return jsonify({"error": f"Face script not found: {face_script}"}), 500
+
+    python_exe = get_face_python_executable()
+
+    cmd = [
+        python_exe,
+        str(face_script),
+        "--visit_id", str(visit_id),
+        "--patient_id", str(patient_id),
+        "--runs_dir", str(RUNS_DIR.resolve()),
+    ]
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(get_repo_root()),
+        )
+
+        active_face_processes[visit_id] = proc
+        print(f"[Face] Started face analysis for visit {visit_id}: {' '.join(cmd)}")
+        return jsonify({
+            "status": "ok",
+            "visit_id": visit_id,
+            "pid": proc.pid,
+            "message": "Face analysis started"
+        })
+    except Exception as e:
+        return jsonify({"error": f"Failed to start face analysis: {e}"}), 500
+
+
+@app.route('/api/face/stop', methods=['POST'])
+def stop_face_analysis():
+    cleanup_dead_face_processes()
+
+    data = request.get_json(silent=True) or {}
+    visit_id = data.get("visit_id")
+
+    if not visit_id:
+        return jsonify({"error": "visit_id is required"}), 400
+
+    proc = active_face_processes.get(visit_id)
+    if not proc:
+        return jsonify({"error": f"No active face analysis for visit {visit_id}"}), 404
+
+    try:
+        visit_dir = RUNS_DIR / f"visit_{visit_id}"
+        stop_file = visit_dir / "stop_face.txt"
+
+        # Ask the face script to exit gracefully
+        stop_file.write_text("stop", encoding="utf-8")
+        print(f"[Face] Stop signal written for visit {visit_id}")
+
+        # Give the process a few seconds to exit cleanly
+        if proc.poll() is None:
+            try:
+                proc.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                print(f"[Face] Graceful stop timed out for visit {visit_id}; killing process")
+                proc.kill()
+                proc.wait(timeout=5)
+
+        active_face_processes.pop(visit_id, None)
+        print(f"[Face] Stopped face analysis for visit {visit_id}")
+        return jsonify({"status": "ok", "visit_id": visit_id, "message": "Face analysis stopped"})
+    except Exception as e:
+        return jsonify({"error": f"Failed to stop face analysis: {e}"}), 500
+
+
+@app.route('/api/face/status', methods=['GET'])
+def get_face_analysis_status():
+    cleanup_dead_face_processes()
+
+    visit_id = request.args.get("visit_id")
+    if not visit_id:
+        return jsonify({"error": "visit_id is required"}), 400
+
+    proc = active_face_processes.get(visit_id)
+    is_running = proc is not None and proc.poll() is None
+
+    return jsonify({
+        "visit_id": visit_id,
+        "running": is_running,
+        "pid": proc.pid if is_running else None,
+    })
 
 # ====== Visit Management Endpoints ======
-import json
-import shutil
-from pathlib import Path
-from datetime import datetime
 
 RUNS_DIR = Path("runs")
 
@@ -453,16 +599,20 @@ def create_visit(visit_id):
     data = request.get_json(silent=True) or {}
     visit_dir = RUNS_DIR / f"visit_{visit_id}"
     visit_dir.mkdir(parents=True, exist_ok=True)
-    manifest = {
-        "schema_version": "v0.1",
-        "visit_id": visit_id,
-        "patient_id": data.get("patient_id", ""),
-        "created_utc": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "expected_subsystems": ["audio", "face", "gait"],
-        "status": {"audio": "pending", "face": "pending", "gait": "pending"}
-    }
-    with open(visit_dir / "manifest.json", "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=2)
+
+    manifest_path = visit_dir / "manifest.json"
+    if not manifest_path.exists():
+        manifest = {
+            "schema_version": "v0.1",
+            "visit_id": visit_id,
+            "patient_id": data.get("patient_id", ""),
+            "created_utc": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "expected_subsystems": ["audio", "face", "gait"],
+            "status": {"audio": "pending", "face": "pending", "gait": "pending"}
+        }
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2)
+            
     print(f"[Visit] Created visit folder: {visit_dir}")
     return jsonify({"status": "ok", "visit_id": visit_id})
 
