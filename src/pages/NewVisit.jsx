@@ -903,13 +903,6 @@ const handleStopFace = async () => {
                 <FileText className="w-4 h-4" />
                 Live Monitoring
               </CardTitle>
-              <div className="flex items-center gap-2">
-                {!camerasActive ? (
-                  <Button size="sm" variant="outline" onClick={startCameras} className="border-teal-200">Start Facial Camera</Button>
-                ) : (
-                  <Button size="sm" variant="destructive" onClick={stopCameras}>Stop Facial Camera</Button>
-                )}
-              </div>
             </div>
           </CardHeader>
           <CardContent>
@@ -1004,7 +997,10 @@ const handleStopFace = async () => {
                   <p className="text-xs text-red-600">{faceError}</p>
                 )}
               </div>
-
+            </div>
+          </CardContent>
+        </Card>
+        
         <Card className="border-teal-200 bg-white/80 backdrop-blur mb-4 mt-4">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base text-teal-900">

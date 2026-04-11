@@ -13,6 +13,11 @@ import tempfile
 import subprocess
 import sys
 
+import json
+import shutil
+from pathlib import Path
+from datetime import datetime
+
 # Optional: use faster_whisper if installed
 try:
     from faster_whisper import WhisperModel
@@ -578,10 +583,6 @@ def get_face_analysis_status():
     })
 
 # ====== Visit Management Endpoints ======
-import json
-import shutil
-from pathlib import Path
-from datetime import datetime
 
 RUNS_DIR = Path("runs")
 
@@ -590,16 +591,20 @@ def create_visit(visit_id):
     data = request.get_json(silent=True) or {}
     visit_dir = RUNS_DIR / f"visit_{visit_id}"
     visit_dir.mkdir(parents=True, exist_ok=True)
-    manifest = {
-        "schema_version": "v0.1",
-        "visit_id": visit_id,
-        "patient_id": data.get("patient_id", ""),
-        "created_utc": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "expected_subsystems": ["audio", "face", "gait"],
-        "status": {"audio": "pending", "face": "pending", "gait": "pending"}
-    }
-    with open(visit_dir / "manifest.json", "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=2)
+
+    manifest_path = visit_dir / "manifest.json"
+    if not manifest_path.exists():
+        manifest = {
+            "schema_version": "v0.1",
+            "visit_id": visit_id,
+            "patient_id": data.get("patient_id", ""),
+            "created_utc": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "expected_subsystems": ["audio", "face", "gait"],
+            "status": {"audio": "pending", "face": "pending", "gait": "pending"}
+        }
+        with open(visit_dir / "manifest.json", "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2)
+            
     print(f"[Visit] Created visit folder: {visit_dir}")
     return jsonify({"status": "ok", "visit_id": visit_id})
 
