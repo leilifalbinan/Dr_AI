@@ -16,7 +16,7 @@ import {
   Filler,
 } from "chart.js";
 import { Chart } from "react-chartjs-2";
-import { ArrowLeft, FileBarChart, Activity, FileText, TrendingUp, Brain, Download } from "lucide-react";
+import { ArrowLeft, FileBarChart, Activity, TrendingUp, Brain, Download, MessageSquareText } from "lucide-react";
 import { createPageUrl, cn } from "@/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -24,14 +24,11 @@ import { Badge } from "@/components/ui/badge";
 import { generateCombinedReportPDF } from "@/utils/combinedReportPdf";
 import { demoSerialVisitSnapshots } from "@/data/reportSerialTrendDemoData";
 import {
-  demoFace,
-  demoAudio,
-  demoGait,
-  demoVisitSnapshot,
   DEMO_REPORT_PATIENT_ID,
   DEMO_REPORT_VISIT_ID,
-  demoAiAssessment,
+  getReportDemoPackage,
 } from "@/data/reportSummaryDemoData";
+import VisitTranscriptionNlpPanel from "@/components/VisitTranscriptionNlpPanel";
 
 ChartJS.register(
   CategoryScale,
@@ -217,9 +214,10 @@ export default function ReportSummary() {
     enabled: !!visitIdParam,
   });
 
-  const [face] = useState(demoFace);
-  const [audio] = useState(demoAudio);
-  const [gait] = useState(demoGait);
+  const reportPkg = useMemo(() => getReportDemoPackage(visitIdParam), [visitIdParam]);
+  const face = reportPkg.face;
+  const audio = reportPkg.audio;
+  const gait = reportPkg.gait;
   const [showFaceRaw, setShowFaceRaw] = useState(false);
   const [showAudioRaw, setShowAudioRaw] = useState(false);
   const [showGaitRaw, setShowGaitRaw] = useState(false);
@@ -246,8 +244,30 @@ export default function ReportSummary() {
   const aiAssessment = useMemo(() => {
     const a = loadedVisit?.ai_assessment;
     if (a && typeof a === "object") return a;
-    return demoAiAssessment;
-  }, [loadedVisit]);
+    return reportPkg.aiAssessment;
+  }, [loadedVisit, reportPkg.aiAssessment]);
+
+  const { nlpVisit, nlpUsingDemoFallback } = useMemo(() => {
+    const demo = reportPkg.transcriptionNlp;
+    if (!loadedVisit) {
+      return { nlpVisit: demo, nlpUsingDemoFallback: true };
+    }
+    const hasNlpSaved = Boolean(
+      loadedVisit.transcription ||
+        loadedVisit.keyword_analysis ||
+        loadedVisit.sentiment_analysis ||
+        loadedVisit.semantic_analysis ||
+        loadedVisit.physician_notes ||
+        loadedVisit.ai_comparison
+    );
+    if (!hasNlpSaved) {
+      return {
+        nlpVisit: { ...loadedVisit, ...demo },
+        nlpUsingDemoFallback: true,
+      };
+    }
+    return { nlpVisit: loadedVisit, nlpUsingDemoFallback: false };
+  }, [loadedVisit, reportPkg.transcriptionNlp]);
 
   const vitalsDisplay = useMemo(() => {
     const v = loadedVisit;
@@ -267,8 +287,8 @@ export default function ReportSummary() {
         bmi: v.bmi,
       };
     }
-    return { ...demoVisitSnapshot };
-  }, [loadedVisit]);
+    return { ...reportPkg.visitSnapshot };
+  }, [loadedVisit, reportPkg.visitSnapshot]);
 
   const visitMeta = useMemo(() => {
     const allRecs = [...face, ...audio, ...gait];
@@ -625,7 +645,9 @@ export default function ReportSummary() {
               </div>
               <div>
                 <h1 className="text-2xl font-semibold text-teal-900">Report summary</h1>
-                <p className="text-sm text-teal-700">Visit review · face, audio, gait</p>
+                <p className="text-sm text-teal-700">
+                  Visit review · multimodal, transcription &amp; AI
+                </p>
               </div>
             </div>
           </div>
@@ -637,12 +659,18 @@ export default function ReportSummary() {
         </div>
 
         <div className="flex flex-col sm:flex-row flex-wrap gap-3 mb-6">
-          <Link to={createPageUrl(`VisitDetails?id=${visitIdParam}&from=report`)} className="inline-flex">
-            <Button className="bg-violet-600 hover:bg-violet-700 text-white w-full sm:w-auto">
-              <FileText className="w-4 h-4 mr-2 shrink-0" />
-              Full visit analysis (transcription &amp; NLP)
-            </Button>
-          </Link>
+          <Button
+            type="button"
+            variant="default"
+            className="bg-teal-700 hover:bg-teal-800 text-white w-full sm:w-auto"
+            onClick={() => {
+              setReportTab("nlp");
+              document.getElementById("report-main-tabs")?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }}
+          >
+            <MessageSquareText className="w-4 h-4 mr-2 shrink-0" />
+            Visit Details
+          </Button>
           <Link
             to={createPageUrl(
               `ReportSerialTrends?patientId=${encodeURIComponent(patientIdForTrends)}&visitId=${encodeURIComponent(visitIdParam)}`
@@ -651,7 +679,7 @@ export default function ReportSummary() {
           >
             <Button variant="outline" className="border-teal-300 text-teal-800 hover:bg-teal-50 w-full sm:w-auto">
               <TrendingUp className="w-4 h-4 mr-2 shrink-0" />
-              Continue to serial trend analysis
+              Serial Trend Analysis
             </Button>
           </Link>
           <Button
@@ -690,6 +718,12 @@ export default function ReportSummary() {
                     <p className="text-[0.65rem] uppercase tracking-wider text-teal-300/90">Visit ID</p>
                     <p className="font-mono font-semibold">{visitMeta.visitId}</p>
                   </div>
+                  {loadedVisit?.visit_number != null && loadedVisit.visit_number !== "" && (
+                    <div>
+                      <p className="text-[0.65rem] uppercase tracking-wider text-teal-300/90">Visit #</p>
+                      <p className="font-mono font-semibold">{loadedVisit.visit_number}</p>
+                    </div>
+                  )}
                   <div>
                     <p className="text-[0.65rem] uppercase tracking-wider text-teal-300/90">Patient Name</p>
                     <p className="font-semibold">{patientDisplayName}</p>
@@ -698,6 +732,18 @@ export default function ReportSummary() {
                     <p className="text-[0.65rem] uppercase tracking-wider text-teal-300/90">Patient ID</p>
                     <p className="font-mono font-semibold">{visitMeta.patientId}</p>
                   </div>
+                  {patient?.medical_record_number ? (
+                    <div>
+                      <p className="text-[0.65rem] uppercase tracking-wider text-teal-300/90">MRN</p>
+                      <p className="font-mono font-semibold">{patient.medical_record_number}</p>
+                    </div>
+                  ) : null}
+                  {patient?.primary_diagnosis ? (
+                    <div>
+                      <p className="text-[0.65rem] uppercase tracking-wider text-teal-300/90">Primary diagnosis</p>
+                      <p className="leading-snug">{patient.primary_diagnosis}</p>
+                    </div>
+                  ) : null}
                   <div>
                     <p className="text-[0.65rem] uppercase tracking-wider text-teal-300/90">Phase</p>
                     <p className="font-mono font-semibold">{visitMeta.phase}</p>
@@ -792,7 +838,7 @@ export default function ReportSummary() {
 
           </aside>
 
-          <main className="flex-1 min-w-0 space-y-8">
+          <main id="report-main-tabs" className="flex-1 min-w-0 space-y-8 scroll-mt-8">
             <div className="flex flex-wrap gap-2 border-b border-teal-200 pb-2">
               <button
                 type="button"
@@ -805,6 +851,19 @@ export default function ReportSummary() {
                 )}
               >
                 Multimodal analysis
+              </button>
+              <button
+                type="button"
+                onClick={() => setReportTab("nlp")}
+                className={cn(
+                  "px-4 py-2 text-sm font-medium rounded-t-md border-b-2 -mb-px transition-colors inline-flex items-center gap-1.5",
+                  reportTab === "nlp"
+                    ? "border-teal-600 text-teal-900 bg-white/50"
+                    : "border-transparent text-teal-600 hover:text-teal-800"
+                )}
+              >
+                <MessageSquareText className="w-3.5 h-3.5 opacity-80" />
+                Transcription &amp; NLP
               </button>
               <button
                 type="button"
@@ -821,6 +880,10 @@ export default function ReportSummary() {
             </div>
 
             {reportTab === "ai" && <AiDiagnosticAssessmentPanel assessment={aiAssessment} />}
+
+            {reportTab === "nlp" && (
+              <VisitTranscriptionNlpPanel visit={nlpVisit} usingDemoFallback={nlpUsingDemoFallback} />
+            )}
 
             {reportTab === "multimodal" && (
               <>

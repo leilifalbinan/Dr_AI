@@ -1,5 +1,7 @@
 import React, { useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/api/apiClient";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -20,6 +22,7 @@ import {
   demoSerialVisitSnapshots,
   SERIAL_TREND_DEMO_PATIENT_ID,
 } from "@/data/reportSerialTrendDemoData";
+import PatientNlpTrendCharts from "@/components/PatientNlpTrendCharts";
 
 ChartJS.register(CategoryScale, LinearScale, LineElement, PointElement, Legend, Tooltip, Filler);
 
@@ -33,20 +36,41 @@ const lineOpts = {
   },
 };
 
+const dualAxisLegend = { labels: { font: { size: 10 } } };
+
 export default function ReportSerialTrends() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const patientId = searchParams.get("patientId") || SERIAL_TREND_DEMO_PATIENT_ID;
   const visitId = searchParams.get("visitId") || "";
 
+  const { data: trendPatient } = useQuery({
+    queryKey: ["patient", patientId],
+    queryFn: async () => {
+      const rows = await api.entities.Patient.filter({ id: patientId });
+      return rows[0];
+    },
+    enabled: !!patientId,
+  });
+
+  const { data: storedVisitsForNlp = [] } = useQuery({
+    queryKey: ["visits", "nlp-trends", patientId],
+    queryFn: () => api.entities.Visit.filter({ patient_id: patientId }, "visit_date"),
+    enabled: !!patientId,
+  });
+
   const snaps = demoSerialVisitSnapshots;
+
+  const patientLabel = trendPatient
+    ? `${trendPatient.first_name} ${trendPatient.last_name}`.trim()
+    : null;
 
   const labels = useMemo(
     () => snaps.map((s) => format(new Date(s.visit_date), "MMM d, yy")),
     [snaps]
   );
 
-  const vitalsChart = useMemo(
+  const vitalsChartBpHr = useMemo(
     () => ({
       labels,
       datasets: [
@@ -57,6 +81,16 @@ export default function ReportSerialTrends() {
           backgroundColor: "rgba(15,118,110,0.12)",
           tension: 0.25,
           fill: false,
+          yAxisID: "yMmhg",
+        },
+        {
+          label: "Diastolic BP",
+          data: snaps.map((s) => s.bp_diastolic),
+          borderColor: "#2dd4bf",
+          backgroundColor: "rgba(45,212,191,0.1)",
+          tension: 0.25,
+          fill: false,
+          yAxisID: "yMmhg",
         },
         {
           label: "Heart rate",
@@ -65,10 +99,148 @@ export default function ReportSerialTrends() {
           backgroundColor: "rgba(124,58,237,0.1)",
           tension: 0.25,
           fill: false,
+          yAxisID: "yHr",
         },
       ],
     }),
     [labels, snaps]
+  );
+
+  const vitalsChartBpHrOptions = useMemo(
+    () => ({
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: dualAxisLegend },
+      scales: {
+        x: { ticks: { font: { size: 10 } } },
+        yMmhg: {
+          type: "linear",
+          position: "left",
+          title: { display: true, text: "BP (mmHg)", font: { size: 10 } },
+          ticks: { font: { size: 10 } },
+        },
+        yHr: {
+          type: "linear",
+          position: "right",
+          title: { display: true, text: "HR (bpm)", font: { size: 10 } },
+          ticks: { font: { size: 10 } },
+          grid: { drawOnChartArea: false },
+        },
+      },
+    }),
+    []
+  );
+
+  const vitalsChartRrSpo2 = useMemo(
+    () => ({
+      labels,
+      datasets: [
+        {
+          label: "Respiratory rate",
+          data: snaps.map((s) => s.respiratory_rate),
+          borderColor: "#c026d3",
+          backgroundColor: "rgba(192,38,211,0.08)",
+          tension: 0.25,
+          fill: false,
+          yAxisID: "yRr",
+        },
+        {
+          label: "SpO₂",
+          data: snaps.map((s) => s.spo2),
+          borderColor: "#ea580c",
+          backgroundColor: "rgba(234,88,12,0.08)",
+          tension: 0.25,
+          fill: false,
+          yAxisID: "ySpo2",
+        },
+      ],
+    }),
+    [labels, snaps]
+  );
+
+  const vitalsChartRrSpo2Options = useMemo(
+    () => ({
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: dualAxisLegend },
+      scales: {
+        x: { ticks: { font: { size: 10 } } },
+        yRr: {
+          type: "linear",
+          position: "left",
+          title: { display: true, text: "RR (/min)", font: { size: 10 } },
+          ticks: { font: { size: 10 } },
+          suggestedMin: 12,
+          suggestedMax: 24,
+        },
+        ySpo2: {
+          type: "linear",
+          position: "right",
+          title: { display: true, text: "SpO₂ (%)", font: { size: 10 } },
+          ticks: { font: { size: 10 }, callback: (v) => `${v}%` },
+          min: 90,
+          max: 100,
+          grid: { drawOnChartArea: false },
+        },
+      },
+    }),
+    []
+  );
+
+  const vitalsChartTempBmi = useMemo(
+    () => ({
+      labels,
+      datasets: [
+        {
+          label: "Temperature (°F)",
+          data: snaps.map((s) => s.temperature),
+          borderColor: "#dc2626",
+          backgroundColor: "rgba(220,38,38,0.08)",
+          tension: 0.25,
+          fill: false,
+          yAxisID: "yTemp",
+        },
+        {
+          label: "BMI",
+          data: snaps.map((s) => s.bmi),
+          borderColor: "#2563eb",
+          backgroundColor: "rgba(37,99,235,0.08)",
+          tension: 0.25,
+          fill: false,
+          yAxisID: "yBmi",
+        },
+      ],
+    }),
+    [labels, snaps]
+  );
+
+  const vitalsChartTempBmiOptions = useMemo(
+    () => ({
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: dualAxisLegend },
+      scales: {
+        x: { ticks: { font: { size: 10 } } },
+        yTemp: {
+          type: "linear",
+          position: "left",
+          title: { display: true, text: "Temp (°F)", font: { size: 10 } },
+          ticks: { font: { size: 10 } },
+          suggestedMin: 96,
+          suggestedMax: 102,
+        },
+        yBmi: {
+          type: "linear",
+          position: "right",
+          title: { display: true, text: "BMI", font: { size: 10 } },
+          ticks: { font: { size: 10 } },
+          suggestedMin: 18,
+          suggestedMax: 35,
+          grid: { drawOnChartArea: false },
+        },
+      },
+    }),
+    []
   );
 
   const faceChart = useMemo(
@@ -259,7 +431,13 @@ export default function ReportSerialTrends() {
               <div>
                 <h1 className="text-2xl font-semibold text-teal-900">Serial trend analysis</h1>
                 <p className="text-sm text-teal-700">
-                  Demo series · patient <span className="font-mono">{patientId}</span>
+                  {patientLabel ? (
+                    <>
+                      <span className="font-medium text-teal-900">{patientLabel}</span>
+                      <span className="text-teal-600"> · </span>
+                    </>
+                  ) : null}
+                  Multimodal demo series · <span className="font-mono">{patientId}</span>
                 </p>
               </div>
             </div>
@@ -279,7 +457,10 @@ export default function ReportSerialTrends() {
                     <th className="py-2 pr-2">Date</th>
                     <th className="py-2 pr-2">BP</th>
                     <th className="py-2 pr-2">HR</th>
+                    <th className="py-2 pr-2">RR</th>
+                    <th className="py-2 pr-2">Temp</th>
                     <th className="py-2 pr-2">SpO₂</th>
+                    <th className="py-2 pr-2">BMI</th>
                     <th className="py-2 pr-2">Sentiment</th>
                     <th className="py-2">Gait m/s</th>
                   </tr>
@@ -299,7 +480,10 @@ export default function ReportSerialTrends() {
                         {s.bp_systolic}/{s.bp_diastolic}
                       </td>
                       <td className="py-2 pr-2 font-mono">{s.heart_rate}</td>
+                      <td className="py-2 pr-2 font-mono">{s.respiratory_rate}</td>
+                      <td className="py-2 pr-2 font-mono">{s.temperature?.toFixed(1)}°</td>
                       <td className="py-2 pr-2 font-mono">{s.spo2}%</td>
+                      <td className="py-2 pr-2 font-mono">{s.bmi?.toFixed(1)}</td>
                       <td className="py-2 pr-2 font-mono">{s.sentiment_score?.toFixed(2)}</td>
                       <td className="py-2 font-mono">{s.gait_avg_speed_mps?.toFixed(2)}</td>
                     </tr>
@@ -310,26 +494,71 @@ export default function ReportSerialTrends() {
           </CardContent>
         </Card>
 
+        {storedVisitsForNlp.length > 0 && (
+          <section className="mb-6 space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold text-teal-900">Transcription &amp; NLP trends</h2>
+              <p className="text-sm text-teal-600">
+                Derived from stored visit records for this patient (keyword and sentiment fields).
+              </p>
+            </div>
+            <PatientNlpTrendCharts visits={storedVisitsForNlp} />
+          </section>
+        )}
+
+        <div className="mb-4">
+          <h2 className="text-lg font-semibold text-teal-900">Vitals trends across visits</h2>
+          <p className="text-sm text-teal-600 mb-4">
+            Blood pressure, heart rate, breathing, oxygen saturation, temperature, and BMI from the demo visit series.
+          </p>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <Card className="border-teal-200 bg-white/80 backdrop-blur">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-xs font-semibold uppercase tracking-wider text-teal-600">
+                  Blood pressure &amp; heart rate
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="relative h-[220px] w-full">
+                  <Chart type="line" data={vitalsChartBpHr} options={vitalsChartBpHrOptions} />
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="border-teal-200 bg-white/80 backdrop-blur">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-xs font-semibold uppercase tracking-wider text-teal-600">
+                  Respiratory rate &amp; SpO₂
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="relative h-[220px] w-full">
+                  <Chart type="line" data={vitalsChartRrSpo2} options={vitalsChartRrSpo2Options} />
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="border-teal-200 bg-white/80 backdrop-blur">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-xs font-semibold uppercase tracking-wider text-teal-600">
+                  Temperature &amp; BMI
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="relative h-[220px] w-full">
+                  <Chart type="line" data={vitalsChartTempBmi} options={vitalsChartTempBmiOptions} />
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
-          <Card className="border-teal-200 bg-white/80 backdrop-blur">
+          <Card className="border-teal-200 bg-white/80 backdrop-blur xl:col-span-2">
             <CardHeader className="pb-2">
               <CardTitle className="text-xs font-semibold uppercase tracking-wider text-teal-600">
-                Vitals trend
+                Latest visit vs prior (quick deltas)
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="relative h-[240px] w-full">
-                <Chart type="line" data={vitalsChart} options={lineOpts} />
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="border-teal-200 bg-white/80 backdrop-blur">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-semibold uppercase tracking-wider text-teal-600">
-                Current visit quick metrics
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="grid grid-cols-2 gap-3">
+            <CardContent className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
               <div className="rounded-lg border border-teal-200 bg-teal-50/70 p-3">
                 <p className="text-[0.65rem] uppercase tracking-wider text-teal-600">BP</p>
                 <p className="text-lg font-semibold text-teal-900 font-mono">
@@ -337,8 +566,8 @@ export default function ReportSerialTrends() {
                 </p>
                 {previous && (
                   <p className="text-xs text-teal-700">
-                    delta {latest.bp_systolic - previous.bp_systolic >= 0 ? "+" : ""}
-                    {latest.bp_systolic - previous.bp_systolic} sys
+                    Δ sys {latest.bp_systolic - previous.bp_systolic >= 0 ? "+" : ""}
+                    {latest.bp_systolic - previous.bp_systolic}
                   </p>
                 )}
               </div>
@@ -347,8 +576,46 @@ export default function ReportSerialTrends() {
                 <p className="text-lg font-semibold text-teal-900 font-mono">{latest.heart_rate} bpm</p>
                 {previous && (
                   <p className="text-xs text-teal-700">
-                    delta {latest.heart_rate - previous.heart_rate >= 0 ? "+" : ""}
+                    Δ {latest.heart_rate - previous.heart_rate >= 0 ? "+" : ""}
                     {latest.heart_rate - previous.heart_rate}
+                  </p>
+                )}
+              </div>
+              <div className="rounded-lg border border-teal-200 bg-teal-50/70 p-3">
+                <p className="text-[0.65rem] uppercase tracking-wider text-teal-600">RR</p>
+                <p className="text-lg font-semibold text-teal-900 font-mono">{latest.respiratory_rate}/min</p>
+                {previous && (
+                  <p className="text-xs text-teal-700">
+                    Δ {latest.respiratory_rate - previous.respiratory_rate >= 0 ? "+" : ""}
+                    {latest.respiratory_rate - previous.respiratory_rate}
+                  </p>
+                )}
+              </div>
+              <div className="rounded-lg border border-teal-200 bg-teal-50/70 p-3">
+                <p className="text-[0.65rem] uppercase tracking-wider text-teal-600">SpO₂</p>
+                <p className="text-lg font-semibold text-teal-900 font-mono">{latest.spo2}%</p>
+                {previous && (
+                  <p className="text-xs text-teal-700">
+                    Δ {latest.spo2 - previous.spo2 >= 0 ? "+" : ""}
+                    {latest.spo2 - previous.spo2}%
+                  </p>
+                )}
+              </div>
+              <div className="rounded-lg border border-teal-200 bg-teal-50/70 p-3">
+                <p className="text-[0.65rem] uppercase tracking-wider text-teal-600">Temp</p>
+                <p className="text-lg font-semibold text-teal-900 font-mono">{latest.temperature?.toFixed(1)} °F</p>
+                {previous && (
+                  <p className="text-xs text-teal-700">
+                    Δ {(latest.temperature - previous.temperature).toFixed(1)} °F
+                  </p>
+                )}
+              </div>
+              <div className="rounded-lg border border-teal-200 bg-teal-50/70 p-3">
+                <p className="text-[0.65rem] uppercase tracking-wider text-teal-600">BMI</p>
+                <p className="text-lg font-semibold text-teal-900 font-mono">{latest.bmi?.toFixed(1)}</p>
+                {previous && (
+                  <p className="text-xs text-teal-700">
+                    Δ {(latest.bmi - previous.bmi).toFixed(1)}
                   </p>
                 )}
               </div>
@@ -357,8 +624,7 @@ export default function ReportSerialTrends() {
                 <p className="text-lg font-semibold text-teal-900 font-mono">{latest.sentiment_score?.toFixed(2)}</p>
                 {previous && (
                   <p className="text-xs text-teal-700">
-                    delta {latest.sentiment_score - previous.sentiment_score >= 0 ? "+" : ""}
-                    {(latest.sentiment_score - previous.sentiment_score).toFixed(2)}
+                    Δ {(latest.sentiment_score - previous.sentiment_score).toFixed(2)}
                   </p>
                 )}
               </div>
@@ -367,8 +633,7 @@ export default function ReportSerialTrends() {
                 <p className="text-lg font-semibold text-teal-900 font-mono">{latest.gait_avg_speed_mps?.toFixed(2)} m/s</p>
                 {previous && (
                   <p className="text-xs text-teal-700">
-                    delta {latest.gait_avg_speed_mps - previous.gait_avg_speed_mps >= 0 ? "+" : ""}
-                    {(latest.gait_avg_speed_mps - previous.gait_avg_speed_mps).toFixed(2)}
+                    Δ {(latest.gait_avg_speed_mps - previous.gait_avg_speed_mps).toFixed(2)}
                   </p>
                 )}
               </div>
@@ -376,49 +641,62 @@ export default function ReportSerialTrends() {
           </Card>
         </div>
 
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
-          <Card className="border-teal-200 bg-white/80 backdrop-blur">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-semibold uppercase tracking-wider text-teal-600">
-                Face subsystem trends
+        <section className="mb-8 space-y-8">
+          <div>
+            <h2 className="text-lg font-semibold text-teal-900">Multimodal subsystem trends</h2>
+            <p className="text-sm text-teal-600 mt-1">
+              Face, audio, and gait metrics across the demo visit timeline — each chart uses the full width below its title.
+            </p>
+          </div>
+
+          <Card className="border-teal-200 bg-white/80 backdrop-blur w-full shadow-sm">
+            <CardHeader className="border-b border-teal-100 pb-4 pt-6 px-6">
+              <CardTitle className="text-xl font-semibold text-teal-900 tracking-tight">
+                Face subsystem
               </CardTitle>
+              <p className="text-sm text-teal-600 font-normal mt-1">
+                Emotion distribution (low affect, arousal, disgust, anger, happy) over visits
+              </p>
             </CardHeader>
-            <CardContent>
-              <div className="relative h-[240px] w-full">
+            <CardContent className="px-4 sm:px-6 pb-6 pt-4">
+              <div className="relative h-[min(420px,50vh)] min-h-[300px] w-full">
                 <Chart type="line" data={faceChart} options={lineOpts} />
               </div>
             </CardContent>
           </Card>
 
-          <Card className="border-teal-200 bg-white/80 backdrop-blur">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-semibold uppercase tracking-wider text-teal-600">
-                Audio subsystem trends
+          <Card className="border-teal-200 bg-white/80 backdrop-blur w-full shadow-sm">
+            <CardHeader className="border-b border-teal-100 pb-4 pt-6 px-6">
+              <CardTitle className="text-xl font-semibold text-teal-900 tracking-tight">
+                Audio subsystem
               </CardTitle>
+              <p className="text-sm text-teal-600 font-normal mt-1">
+                Sentiment score and diagnostic language density over visits
+              </p>
             </CardHeader>
-            <CardContent>
-              <div className="relative h-[240px] w-full">
+            <CardContent className="px-4 sm:px-6 pb-6 pt-4">
+              <div className="relative h-[min(420px,50vh)] min-h-[300px] w-full">
                 <Chart type="line" data={audioChart} options={twoAxisSentimentOptions} />
               </div>
             </CardContent>
           </Card>
-        </div>
 
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
-          <Card className="border-teal-200 bg-white/80 backdrop-blur">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-semibold uppercase tracking-wider text-teal-600">
-                Gait subsystem trends
+          <Card className="border-teal-200 bg-white/80 backdrop-blur w-full shadow-sm">
+            <CardHeader className="border-b border-teal-100 pb-4 pt-6 px-6">
+              <CardTitle className="text-xl font-semibold text-teal-900 tracking-tight">
+                Gait subsystem
               </CardTitle>
+              <p className="text-sm text-teal-600 font-normal mt-1">
+                Walking speed, symmetry, and stability over visits
+              </p>
             </CardHeader>
-            <CardContent>
-              <div className="relative h-[240px] w-full">
+            <CardContent className="px-4 sm:px-6 pb-6 pt-4">
+              <div className="relative h-[min(420px,50vh)] min-h-[300px] w-full">
                 <Chart type="line" data={gaitChart} options={gaitOptions} />
               </div>
             </CardContent>
           </Card>
-
-        </div>
+        </section>
 
         <Card className="border-teal-200 bg-white/80 backdrop-blur mb-6">
           <CardHeader className="pb-2">

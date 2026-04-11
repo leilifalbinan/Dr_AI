@@ -1,3 +1,12 @@
+import {
+  demoAiAssessment2,
+  demoTranscriptionNlp2,
+  demoVisitSnapshot2,
+  DEMO_REPORT_VISIT_ID_2,
+  DEMO_REPORT_PATIENT_ID_2,
+} from '@/data/reportSummaryDemoData';
+import { buildMichaelSerialStorageVisits } from '@/data/michaelSerialVisitStorageSeeds';
+
 const STORAGE_KEYS = {
   PATIENTS: 'smart_exam_room_patients',
   VISITS: 'smart_exam_room_visits'
@@ -30,16 +39,25 @@ let visits = loadFromStorage(STORAGE_KEYS.VISITS);
 // Generate unique ID
 const generateId = () => `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
-// Helper to sort array
+const DATE_SORT_FIELDS = new Set(['visit_date', 'created_date', 'updated_date']);
+
+// Helper to sort array (dates compared as time so ordering is correct across patients)
 const sortArray = (array, sortField) => {
   if (!sortField) return array;
-  
+
   const descending = sortField.startsWith('-');
   const field = descending ? sortField.slice(1) : sortField;
-  
+
   return [...array].sort((a, b) => {
     const aVal = a[field];
     const bVal = b[field];
+    if (DATE_SORT_FIELDS.has(field) && aVal != null && bVal != null) {
+      const at = new Date(aVal).getTime();
+      const bt = new Date(bVal).getTime();
+      if (!Number.isNaN(at) && !Number.isNaN(bt)) {
+        return descending ? bt - at : at - bt;
+      }
+    }
     if (descending) {
       return bVal > aVal ? 1 : -1;
     }
@@ -169,109 +187,153 @@ export const api = {
   }
 };
 
-// Initialize with demo data if empty
-const initializeDemoData = () => {
-  if (patients.length === 0) {
-    const demoPatient = {
-      id: 'patient-demo-1',
-      first_name: 'Michael',
-      last_name: 'Reyes',
-      date_of_birth: '1962-09-21',
-      gender: 'male',
-      medical_record_number: 'MRN-CC-2048',
-      primary_diagnosis: 'Suspected Parkinson disease',
-      created_date: '2025-01-15T10:00:00Z',
-      updated_date: '2025-01-15T10:00:00Z'
-    };
-    patients.push(demoPatient);
-    saveToStorage(STORAGE_KEYS.PATIENTS, patients);
-  }
-  
-  if (visits.length === 0) {
-    const demoVisit = {
-      id: 'visit-demo-1',
-      patient_id: 'patient-demo-1',
-      visit_number: 1,
-      visit_date: '2026-03-28',
-      chief_complaint: 'Progressive resting tremor, gait slowing, and stiffness',
-      bp_systolic: 132,
-      bp_diastolic: 78,
-      heart_rate: 74,
-      respiratory_rate: 16,
-      temperature: 98.4,
-      temperature_unit: 'fahrenheit',
-      spo2: 98,
-      height: 170,
-      weight: 70,
-      bmi: 24.2,
-      transcription: 'For about a year I have had a resting tremor in my right hand that is getting more noticeable. I am slower when walking, turning is difficult, and my family says I shuffle. I feel stiff, especially in the morning, and my handwriting has become smaller. My voice is softer and I feel more fatigued with daily tasks.',
-      physician_notes: '',
-      keyword_analysis: {
-        total_words: 66,
-        diagnostic_keywords: {
-          tremor: 4,
-          slow: 3,
-          walking: 3,
-          shuffle: 2,
-          stiffness: 2,
-          balance: 2,
-          handwriting: 1,
-          voice: 1,
-          fatigue: 2
-        },
-        keyword_percentage: 28.7,
-        top_keywords: [
-          { word: 'tremor', count: 4, category: 'NEUROLOGIC' },
-          { word: 'slow walking', count: 3, category: 'MOTOR' },
-          { word: 'stiffness', count: 2, category: 'MOTOR' },
-          { word: 'fatigue', count: 2, category: 'CONSTITUTIONAL' }
-        ]
-      },
-      sentiment_analysis: {
-        overall_sentiment: 'negative',
-        sentiment_score: -0.34,
-        distress_level: 'medium',
-        emotional_indicators: ['frustration', 'worry', 'fatigue', 'slowness']
-      },
-      semantic_analysis: {
-        key_themes: ['resting tremor', 'bradykinesia', 'gait instability', 'rigidity', 'fine motor decline'],
-        symptom_severity: 'moderate',
-        functional_impact: 'moderate',
-        temporal_patterns: 'progressive'
-      },
-      ai_assessment: {
-        suggested_diagnoses: [
-          'Idiopathic Parkinson disease (early to moderate stage)',
-          'Parkinsonian syndrome requiring medication-response clarification',
-          'Essential tremor with gait dysfunction (less likely)'
-        ],
-        recommended_tests: [
-          'Comprehensive neurologic exam with UPDRS scoring',
-          'MRI brain',
-          'DaTscan if diagnosis uncertain',
-          'CBC, CMP, TSH, vitamin B12',
-          'Formal physical therapy gait and balance assessment'
-        ],
-        treatment_suggestions: [
-          'Trial dopaminergic therapy (e.g., carbidopa-levodopa) as clinically appropriate',
-          'Physical and occupational therapy for gait and ADL support',
-          'Structured exercise and balance program',
-          'Fall-risk mitigation and home safety planning'
-        ],
-        patient_education: [
-          'Track tremor, gait speed, and freezing episodes daily',
-          'Maintain hydration, regular sleep, and consistent exercise',
-          'Use assistive devices and remove home fall hazards',
-          'Seek urgent care for sudden neurologic decline or repeated falls'
-        ],
-        follow_up_recommendations: 'Neurology follow-up in 2-4 weeks to review progression and treatment response.'
-      },
-      created_date: '2026-03-28T14:30:00Z',
-      updated_date: '2026-03-28T14:30:00Z'
-    };
-    visits.push(demoVisit);
-    saveToStorage(STORAGE_KEYS.VISITS, visits);
-  }
+/** Seeded demo patients — same ids as `reportSummaryDemoData` for report wiring. */
+const SEED_PATIENT_DEMO_1 = {
+  id: 'patient-demo-1',
+  first_name: 'Michael',
+  last_name: 'Reyes',
+  date_of_birth: '1962-09-21',
+  gender: 'male',
+  medical_record_number: 'MRN-CC-2048',
+  primary_diagnosis: 'Suspected Parkinson disease',
+  created_date: '2025-01-15T10:00:00Z',
+  updated_date: '2025-01-15T10:00:00Z',
 };
 
-initializeDemoData();
+const SEED_PATIENT_DEMO_2 = {
+  id: DEMO_REPORT_PATIENT_ID_2,
+  first_name: 'Sarah',
+  last_name: 'Martinez',
+  date_of_birth: '1986-04-10',
+  gender: 'female',
+  medical_record_number: 'MRN-12345',
+  primary_diagnosis: 'Fibromyalgia syndrome (working diagnosis)',
+  created_date: '2025-10-01T10:00:00Z',
+  updated_date: '2025-10-01T10:00:00Z',
+};
+
+/** Four visits for Michael Reyes — ids and vitals match `demoSerialVisitSnapshots` (serial trend page). */
+const MICHAEL_SERIAL_VISITS_SEED = buildMichaelSerialStorageVisits();
+
+const snap2 = demoVisitSnapshot2;
+const nlp2 = demoTranscriptionNlp2;
+
+const SEED_VISIT_DEMO_2 = {
+  id: DEMO_REPORT_VISIT_ID_2,
+  patient_id: DEMO_REPORT_PATIENT_ID_2,
+  visit_number: 1,
+  visit_date: snap2.visit_date,
+  chief_complaint: snap2.chief_complaint,
+  bp_systolic: snap2.bp_systolic,
+  bp_diastolic: snap2.bp_diastolic,
+  heart_rate: snap2.heart_rate,
+  respiratory_rate: snap2.respiratory_rate,
+  temperature: snap2.temperature,
+  temperature_unit: snap2.temperature_unit,
+  spo2: snap2.spo2,
+  height: snap2.height,
+  weight: snap2.weight,
+  bmi: snap2.bmi,
+  transcription: nlp2.transcription,
+  physician_notes: nlp2.physician_notes,
+  keyword_analysis: nlp2.keyword_analysis,
+  sentiment_analysis: nlp2.sentiment_analysis,
+  semantic_analysis: nlp2.semantic_analysis,
+  ai_assessment: demoAiAssessment2,
+  created_date: '2025-10-29T15:00:00Z',
+  updated_date: '2025-10-29T15:00:00Z',
+};
+
+const SEED_PATIENTS = [SEED_PATIENT_DEMO_1, SEED_PATIENT_DEMO_2];
+const SEED_VISITS = [...MICHAEL_SERIAL_VISITS_SEED, SEED_VISIT_DEMO_2];
+
+/**
+ * Removes extra local rows for the seeded Sarah demo (same chief complaint, wrong id),
+ * e.g. duplicate Oct 28 + Oct 29 visits both tied to patient-demo-2 from earlier test data.
+ * Keeps the canonical visit-demo-2 row only for that complaint.
+ */
+function dedupeSeededSarahPainVisits() {
+  const canonId = DEMO_REPORT_VISIT_ID_2;
+  const complaint = SEED_VISIT_DEMO_2.chief_complaint;
+  const dupes = visits.filter(
+    (v) =>
+      v.patient_id === DEMO_REPORT_PATIENT_ID_2 &&
+      v.id !== canonId &&
+      v.chief_complaint === complaint
+  );
+  if (dupes.length === 0) return false;
+  const drop = new Set(dupes.map((v) => v.id));
+  visits = visits.filter((v) => !drop.has(v.id));
+  return true;
+}
+
+/**
+ * Fix or insert canonical demo rows if ids exist but point at the wrong patient or stale fields
+ * (e.g. visit-demo-1 was overwritten so both rows show Sarah).
+ */
+function healCanonicalDemoRows() {
+  let changed = false;
+
+  const healPatient = (seed) => {
+    const idx = patients.findIndex((p) => p.id === seed.id);
+    if (idx === -1) {
+      patients.push({ ...seed });
+      changed = true;
+      return;
+    }
+    const cur = patients[idx];
+    if (cur.first_name !== seed.first_name || cur.last_name !== seed.last_name || cur.medical_record_number !== seed.medical_record_number) {
+      patients[idx] = { ...seed };
+      changed = true;
+    }
+  };
+
+  const healVisit = (seed) => {
+    const idx = visits.findIndex((v) => v.id === seed.id);
+    if (idx === -1) {
+      visits.push({ ...seed });
+      changed = true;
+      return;
+    }
+    const cur = visits[idx];
+    if (cur.patient_id !== seed.patient_id || cur.chief_complaint !== seed.chief_complaint || cur.visit_date !== seed.visit_date) {
+      visits[idx] = { ...seed };
+      changed = true;
+    }
+  };
+
+  healPatient(SEED_PATIENT_DEMO_1);
+  healPatient(SEED_PATIENT_DEMO_2);
+  MICHAEL_SERIAL_VISITS_SEED.forEach((row) => healVisit(row));
+  healVisit(SEED_VISIT_DEMO_2);
+  return changed;
+}
+
+/** Merge demo rows when missing so existing browsers gain new demos without clearing storage. */
+function ensureDemoSeed() {
+  let changed = false;
+  for (const p of SEED_PATIENTS) {
+    if (!patients.some((x) => x.id === p.id)) {
+      patients.push({ ...p });
+      changed = true;
+    }
+  }
+  for (const v of SEED_VISITS) {
+    if (!visits.some((x) => x.id === v.id)) {
+      visits.push({ ...v });
+      changed = true;
+    }
+  }
+  if (healCanonicalDemoRows()) {
+    changed = true;
+  }
+  if (dedupeSeededSarahPainVisits()) {
+    changed = true;
+  }
+  if (changed) {
+    saveToStorage(STORAGE_KEYS.PATIENTS, patients);
+    saveToStorage(STORAGE_KEYS.VISITS, visits);
+  }
+}
+
+ensureDemoSeed();

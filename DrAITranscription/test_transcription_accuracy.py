@@ -5,7 +5,7 @@ import os
 import tempfile
 import string
 from faster_whisper import WhisperModel
-from app import normalize_audio, save_wav_file, SAMPLE_RATE, format_timestamp
+from app import normalize_audio, save_wav_file, SAMPLE_RATE_CAPTURE, format_timestamp
 import difflib
 
 # Helper function to normalize words by removing punctuation
@@ -84,7 +84,7 @@ def create_model():
         print(f"Failed to load Whisper model: {e}")
         return None
 
-def load_audio_file(audio_path, target_sr=SAMPLE_RATE):
+def load_audio_file(audio_path, target_sr=SAMPLE_RATE_CAPTURE):
     """Load audio file and resample to target sample rate if needed.
     Supports WAV, FLAC, and other formats via librosa or soundfile.
     """
@@ -151,7 +151,7 @@ def transcribe_audio_identical_to_app(audio_array, model):
     audio = normalize_audio(audio_array)
     
     # Step 2: Save WAV file (identical to app.py line 189)
-    wav_path = save_wav_file(audio, SAMPLE_RATE, 1)
+    wav_path = save_wav_file(audio, SAMPLE_RATE_CAPTURE, 1)
     
     # Step 3 & 4: Transcribe (identical to app.py lines 194-195)
     try:
@@ -288,8 +288,8 @@ def test_transcription_accuracy(audio_file, ground_truth_text):
     # Load audio file
     print("Loading audio file...")
     try:
-        audio = load_audio_file(audio_file, target_sr=SAMPLE_RATE)
-        print(f"Audio loaded: {len(audio)} samples at {SAMPLE_RATE}Hz")
+        audio = load_audio_file(audio_file, target_sr=SAMPLE_RATE_CAPTURE)
+        print(f"Audio loaded: {len(audio)} samples at {SAMPLE_RATE_CAPTURE}Hz")
     except Exception as e:
         print(f"❌ Error loading audio: {e}")
         return None

@@ -1,6 +1,8 @@
-/** Aligns with local demo visit/patient IDs in apiClient when storage was seeded empty. */
+/** Aligns with seeded demo IDs in apiClient (`ensureDemoSeed`). */
 export const DEMO_REPORT_VISIT_ID = "visit-demo-1";
 export const DEMO_REPORT_PATIENT_ID = "patient-demo-1";
+export const DEMO_REPORT_VISIT_ID_2 = "visit-demo-2";
+export const DEMO_REPORT_PATIENT_ID_2 = "patient-demo-2";
 
 /** Vital signs + visit context (same shape as New Visit / persisted visit fields). */
 export const demoVisitSnapshot = {
@@ -48,6 +50,129 @@ export const demoAiAssessment = {
     "Neurology follow-up in 2-4 weeks to review treatment response and adjust care plan.",
 };
 
+/** Sample transcription + NLP when a visit has no saved NLP fields (Report Summary tab). */
+export const demoTranscriptionNlp = {
+  transcription:
+    "Patient: For about a year my right hand shakes at rest and it's getting worse. I'm slower walking and turning is hard; my wife says I shuffle. I'm stiff in the morning, my writing is smaller, my voice is softer, and I'm more tired with daily tasks.\n\nClinician: Any falls, hallucinations, or medication changes?\n\nPatient: No falls yet. Sleep is okay. I'm on no Parkinson meds yet.",
+  speaker_segments: [
+    { speaker: 0, text: "Resting tremor, gait slowing, stiffness, micrographia, hypophonia." },
+    { speaker: 1, text: "Screening questions for red flags." },
+  ],
+  keyword_analysis: {
+    total_words: 86,
+    diagnostic_keywords: { tremor: 4, stiff: 3, slow: 3, walking: 2, balance: 2 },
+    keyword_percentage: 14,
+    top_keywords: [
+      { count: 4, word: "tremor", category: "motor" },
+      { count: 3, word: "stiff", category: "motor" },
+      { count: 3, word: "slow", category: "motor" },
+      { count: 2, word: "walking", category: "gait" },
+      { count: 2, word: "writing", category: "fine motor" },
+    ],
+    inter_word_frequency: {
+      "tremor, stiff": 2,
+      "slow, walking": 2,
+      "stiff, morning": 1,
+    },
+  },
+  sentiment_analysis: {
+    overall_sentiment: "negative",
+    sentiment_score: -0.28,
+    distress_level: "medium",
+    emotional_indicators: ["concern", "fatigue", "functional decline"],
+  },
+  semantic_analysis: {
+    key_themes: ["resting tremor", "bradykinesia", "postural instability", "non-motor symptoms"],
+    symptom_severity: "moderate",
+    functional_impact: "ADLs and mobility affected",
+    temporal_patterns: "Progressive over ~12 months",
+  },
+  physician_notes: "Consider neurology referral, UPDRS-oriented exam, and discussion of levodopa trial when appropriate.",
+};
+
+/** Second demo patient (Sarah Martinez) — fibromyalgia / widespread pain theme. */
+export const demoVisitSnapshot2 = {
+  visit_date: "2025-10-29",
+  chief_complaint: "Pain all over entire body",
+  bp_systolic: 118,
+  bp_diastolic: 76,
+  heart_rate: 82,
+  respiratory_rate: 18,
+  temperature: 98.1,
+  temperature_unit: "fahrenheit",
+  spo2: 97,
+  height: 165,
+  weight: 68,
+  bmi: 25.0,
+};
+
+export const demoAiAssessment2 = {
+  suggested_diagnoses: [
+    "Fibromyalgia syndrome (ACR 2016 criteria — clinical correlation)",
+    "Central sensitization / chronic widespread pain",
+    "Hypothyroidism, autoimmune rheumatic disease (less likely without objective inflammation)",
+  ],
+  recommended_tests: [
+    "CBC, CMP, TSH, vitamin D, inflammatory markers (ESR/CRP)",
+    "Consider ANA / RF if exam suggests connective tissue disease",
+    "Sleep study if prominent non-restorative sleep or suspected apnea",
+    "Physical therapy assessment focusing on pacing and graded activity",
+  ],
+  treatment_suggestions: [
+    "Patient education on pacing, sleep hygiene, and stress reduction",
+    "Graded exercise / movement program with PT guidance",
+    "Trial of FDA-approved fibromyalgia agents as appropriate (e.g., duloxetine, milnacipran, pregabalin)",
+    "Cognitive behavioral therapy for pain coping when available",
+  ],
+  patient_education: [
+    "Flares are common; track triggers (sleep, stress, overexertion)",
+    "Gentle daily movement often helps more than prolonged bed rest",
+    "Keep a brief symptom and activity diary for follow-up visits",
+  ],
+  follow_up_recommendations:
+    "Primary care or rheumatology follow-up in 4–6 weeks to review response and adjust multimodal plan.",
+};
+
+export const demoTranscriptionNlp2 = {
+  transcription:
+    "Patient: The pain is everywhere — shoulders, back, hips, legs. It never fully goes away. I'm exhausted even after sleep, and I can't exercise like I used to without crashing the next day.\n\nClinician: Any joint swelling, fevers, or new weakness?\n\nPatient: No swelling that I can see. No fever. Sometimes my hands feel stiff in the morning for a little while.",
+  speaker_segments: [
+    { speaker: 0, text: "Widespread pain, fatigue, non-restorative sleep, post-exertional worsening." },
+    { speaker: 1, text: "Inflammatory and neurologic red flags screening." },
+  ],
+  keyword_analysis: {
+    total_words: 92,
+    diagnostic_keywords: { pain: 9, sleep: 4, fatigue: 6, body: 3, widespread: 2, exercise: 2 },
+    keyword_percentage: 19,
+    top_keywords: [
+      { count: 9, word: "pain", category: "PAIN" },
+      { count: 6, word: "fatigue", category: "CONSTITUTIONAL" },
+      { count: 4, word: "sleep", category: "SLEEP" },
+      { count: 3, word: "body", category: "GENERAL" },
+      { count: 2, word: "widespread", category: "PAIN" },
+    ],
+    inter_word_frequency: {
+      "pain, fatigue": 3,
+      "sleep, pain": 2,
+      "body, pain": 2,
+    },
+  },
+  sentiment_analysis: {
+    overall_sentiment: "negative",
+    sentiment_score: -0.45,
+    distress_level: "high",
+    emotional_indicators: ["frustration", "hopelessness", "fatigue", "sleep disturbance"],
+  },
+  semantic_analysis: {
+    key_themes: ["widespread pain", "central sensitization", "sleep dysfunction", "functional limitation"],
+    symptom_severity: "moderate to severe",
+    functional_impact: "high — work and exercise tolerance reduced",
+    temporal_patterns: "Chronic with post-exertional flares",
+  },
+  physician_notes:
+    "2016 fibromyalgia diagnostic criteria screening; multimodal plan; rule out alternative rheumatic and endocrine causes.",
+};
+
 /** Demo records for Report Summary (face / audio / gait JSONL-style rows). */
 export const demoFace = [
   { visit_id: "visit-demo-1", patient_id: "patient-demo-1", subsystem: "face", phase: "encounter", type: "window", t_start: 0, t_end: 5, features: { emotion_counts: { happy: 3, angry: 1, low_affect: 5, disgust: 1, arousal: 2 } }, confidence: 0.91, valid: true, schema_version: "v0.1" },
@@ -92,3 +217,40 @@ export const demoGait = [
   { visit_id: "visit-demo-1", patient_id: "patient-demo-1", subsystem: "gait", phase: "entry", type: "event", t: 18.2, features: { event: "walk_end" }, confidence: 0.92, valid: true, schema_version: "v0.1" },
   { visit_id: "visit-demo-1", patient_id: "patient-demo-1", subsystem: "gait", phase: "entry", type: "summary", t_start: 0, t_end: 18.2, features: { avg_speed_mps: 0.86, avg_symmetry: 0.84, avg_stability: 0.73 }, confidence: 0.8, valid: true, schema_version: "v0.1", notes: "Below normal walking speed; mild asymmetry detected" },
 ];
+
+function cloneSubsystemForVisit(rows, visitId, patientId) {
+  return rows.map((r) => ({ ...r, visit_id: visitId, patient_id: patientId }));
+}
+
+const demoFaceVisit2 = cloneSubsystemForVisit(demoFace, DEMO_REPORT_VISIT_ID_2, DEMO_REPORT_PATIENT_ID_2);
+const demoAudioVisit2 = cloneSubsystemForVisit(demoAudio, DEMO_REPORT_VISIT_ID_2, DEMO_REPORT_PATIENT_ID_2);
+const demoGaitVisit2 = cloneSubsystemForVisit(demoGait, DEMO_REPORT_VISIT_ID_2, DEMO_REPORT_PATIENT_ID_2);
+
+const REPORT_PACKAGE_DEFAULT = {
+  face: demoFace,
+  audio: demoAudio,
+  gait: demoGait,
+  aiAssessment: demoAiAssessment,
+  transcriptionNlp: demoTranscriptionNlp,
+  visitSnapshot: demoVisitSnapshot,
+};
+
+const REPORT_PACKAGE_VISIT_2 = {
+  face: demoFaceVisit2,
+  audio: demoAudioVisit2,
+  gait: demoGaitVisit2,
+  aiAssessment: demoAiAssessment2,
+  transcriptionNlp: demoTranscriptionNlp2,
+  visitSnapshot: demoVisitSnapshot2,
+};
+
+/**
+ * Multimodal rows + NLP/AI fallbacks for Report Summary, keyed by persisted visit id.
+ * Unknown ids fall back to demo visit 1 (Michael Reyes).
+ */
+export function getReportDemoPackage(visitId) {
+  if (visitId === DEMO_REPORT_VISIT_ID_2) {
+    return REPORT_PACKAGE_VISIT_2;
+  }
+  return REPORT_PACKAGE_DEFAULT;
+}

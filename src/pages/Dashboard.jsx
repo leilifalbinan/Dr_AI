@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { api } from "@/api/apiClient";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -24,7 +24,27 @@ export default function Dashboard() {
 
   const totalPatients = patients.length;
   const totalVisits = visits.length;
-  const recentVisits = visits.slice(0, 5);
+
+  /** Pin canonical demo visits so Michael + Sarah stay visible even if many other visits exist. */
+  const recentVisits = useMemo(() => {
+    if (!visits.length) return [];
+    const pinIds = ["visit-demo-1", "visit-demo-2"];
+    const pinned = pinIds.map((id) => visits.find((v) => v.id === id)).filter(Boolean);
+    const rest = [...visits]
+      .filter((v) => !pinIds.includes(v.id))
+      .sort((a, b) => {
+        const bt = new Date(b.visit_date).getTime();
+        const at = new Date(a.visit_date).getTime();
+        return (Number.isNaN(bt) || Number.isNaN(at) ? 0 : bt - at);
+      });
+    const merged = [...pinned, ...rest];
+    const seen = new Set();
+    return merged.filter((v) => {
+      if (seen.has(v.id)) return false;
+      seen.add(v.id);
+      return true;
+    }).slice(0, 5);
+  }, [visits]);
 
   const getPatientById = (patientId) => {
     return patients.find(p => p.id === patientId);
@@ -150,7 +170,7 @@ export default function Dashboard() {
                   return (
                     <Link 
                       key={visit.id}
-                      to={createPageUrl(`VisitDetails?id=${visit.id}`)}
+                      to={createPageUrl(`ReportSummary?visitId=${visit.id}`)}
                       className="block"
                     >
                       <div className="p-4 border border-teal-200 rounded-lg hover:border-teal-300 hover:bg-teal-50/50 transition-all">
@@ -160,7 +180,14 @@ export default function Dashboard() {
                               {patient ? `${patient.first_name} ${patient.last_name}` : 'Unknown Patient'}
                             </h3>
                             <p className="text-xs text-teal-700">
-                              {patient && `Age ${calculateAge(patient.date_of_birth)} • MRN: ${patient.medical_record_number || 'N/A'}`}
+                              {patient && (
+                                <>
+                                  Age {calculateAge(patient.date_of_birth)} • MRN: {patient.medical_record_number || 'N/A'}
+                                  {visit.visit_number != null && visit.visit_number !== '' && (
+                                    <span>{` • Visit #${visit.visit_number}`}</span>
+                                  )}
+                                </>
+                              )}
                             </p>
                           </div>
                           <span className="text-xs text-teal-600">
