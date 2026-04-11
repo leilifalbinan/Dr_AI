@@ -56,12 +56,21 @@ export default function NewVisit() {
   });
   const [isStartingTranscription, setIsStartingTranscription] = useState(false);
   const [showNewPatientDialog, setShowNewPatientDialog] = useState(false);
-  // Facial camera refs/state
+  // Manifest-backed subsystem status
+  const [manifestStatus, setManifestStatus] = useState({ audio: 'pending', face: 'pending', gait: 'pending' });
+  const manifestPollRef = useRef(null);   // polling interval
+  const activeVisitIdRef = useRef(null);  // visit ID being tracked
+  // Camera refs and state for dual feeds
+  const video1Ref = useRef(null);
   const video2Ref = useRef(null);
   const canvas2Ref = useRef(null);
   const cameraStreamRef = useRef(null);
   const animationRef = useRef(null);
   const [camerasActive, setCamerasActive] = useState(false);
+
+  // Face refs/state
+  const [isFaceRunning, setIsFaceRunning] = useState(false);
+  const [faceError, setFaceError] = useState(null);
 
   // Gait refs/state
   const [isGaitRunning, setIsGaitRunning] = useState(false);
@@ -94,7 +103,7 @@ export default function NewVisit() {
     transcriptionService.connect().catch(() => {});
   }, [isGaitRunning]);
 
-  // Cleanup transcription on unmount
+  // Cleanup transcription, face, gait on unmount
   useEffect(() => {
     return () => {
       if (isTranscribing) {
@@ -112,6 +121,15 @@ export default function NewVisit() {
         if (animationRef.current) {
           cancelAnimationFrame(animationRef.current);
         }
+
+        if (selectedPatientId && isFaceRunning) {
+          fetch('http://localhost:5000/api/face/stop', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ visit_id: selectedPatientId })
+          }).catch(() => {});
+        }
+
         if (isGaitRunning) {
           fetch('/api/gait/stop', { method: 'POST' }).catch(() => {});
         }
@@ -195,6 +213,70 @@ export default function NewVisit() {
 
     return parts.length > 0 ? `Gait analysis: ${parts.join(', ')}.` : 'Gait analysis completed.';
   };
+
+  //====== Face analysis handlers =====================
+
+  const handleStartFace = async () => {
+  if (!selectedPatientId) {
+    alert("Please select a patient before starting facial analysis.");
+    return;
+  }
+
+  try {
+    setFaceError(null);
+
+    // Ensure visit folder exists before launching face pipeline
+    await fetch(`http://localhost:5000/api/visits/${selectedPatientId}/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ patient_id: selectedPatientId })
+    });
+
+    startManifestPolling(selectedPatientId);
+
+    const res = await fetch('http://localhost:5000/api/face/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        visit_id: selectedPatientId,
+        patient_id: selectedPatientId
+      })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to start face analysis');
+    }
+
+    setIsFaceRunning(true);
+  } catch (err) {
+    console.error(err);
+    setFaceError(err.message || 'Failed to start facial analysis');
+    setIsFaceRunning(false);
+  }
+};
+
+const handleStopFace = async () => {
+  try {
+    const res = await fetch('http://localhost:5000/api/face/stop', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ visit_id: selectedPatientId })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to stop face analysis');
+    }
+
+    setIsFaceRunning(false);
+  } catch (err) {
+    console.error(err);
+    setFaceError(err.message || 'Failed to stop facial analysis');
+  }
+};
+
+  //====== Gait analysis handlers======================
 
   const handleStartGait = async () => {
     try {
@@ -316,7 +398,28 @@ export default function NewVisit() {
       const visit = await api.entities.Visit.create(data);
       return visit;
     },
-    onSuccess: (visit) => {
+    onSuccess: async (visit) => {
+      try {
+        await fetch('http://localhost:5000/api/visits/rename', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ from: selectedPatientId, to: visit.id })
+        });
+      } catch (err) {
+        console.warn('Could not rename visit folder:', err.message);
+      }
+
+      // Auto-trigger integration so VisitDetails loads with data already there
+      try {
+        await fetch(`http://localhost:5000/api/visits/${visit.id}/integrate`, {
+          method: 'POST',
+        });
+        console.log('[Integration] report.json generated automatically');
+      } catch (err) {
+        console.warn('[Integration] Could not auto-integrate:', err.message);
+      }
+
+      stopManifestPolling();
       queryClient.invalidateQueries(['visits']);
       navigate(createPageUrl(`VisitDetails?id=${visit.id}`));
     },
@@ -373,12 +476,53 @@ export default function NewVisit() {
     setSpeakerSegments(prev => [...prev, segment]);
   };
 
+  // ── Manifest polling ────────────────────────────────────────────────────────
+  // Polls /api/visits/<id>/status every 3s during a visit to show real
+  // subsystem status from the manifest.json file on disk.
+  const startManifestPolling = (visitId) => {
+    activeVisitIdRef.current = visitId;
+    if (manifestPollRef.current) clearInterval(manifestPollRef.current);
+    manifestPollRef.current = setInterval(async () => {
+      if (!activeVisitIdRef.current) return;
+      try {
+        const r = await fetch(`http://localhost:5000/api/visits/${activeVisitIdRef.current}/status`);
+        if (r.ok) {
+          const data = await r.json();
+          if (data.status) {
+            setManifestStatus(data.status);
+            setIsFaceRunning(data.status.face === 'running');
+          } 
+        }
+      } catch {}
+    }, 3000);
+  };
+
+  const stopManifestPolling = () => {
+    if (manifestPollRef.current) {
+      clearInterval(manifestPollRef.current);
+      manifestPollRef.current = null;
+    }
+  };
+
   const analyzeTranscription = async () => {
     if (!visitData.transcription || !selectedPatientId) return;
     
     if (!visitData.bp_systolic || !visitData.bp_diastolic || !visitData.heart_rate) {
       alert("Please enter required vital signs: Blood Pressure and Heart Rate");
       return;
+    }
+
+    // Create visit folder in Flask and start manifest polling
+    try {
+      await fetch(`http://localhost:5000/api/visits/${selectedPatientId}/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ patient_id: selectedPatientId })
+      });
+      startManifestPolling(selectedPatientId);
+      setManifestStatus({ audio: 'pending', face: 'pending', gait: 'pending' });
+    } catch (err) {
+      console.warn('Flask offline, skipping visit folder creation:', err.message);
     }
 
     setIsAnalyzing(true);
@@ -410,48 +554,45 @@ export default function NewVisit() {
         }
         jsonlLoggerRef.current = null;
       }*/
-     // If no live recording was done, create a one-shot logger from manual text
-      if (!jsonlLoggerRef.current && visitData.transcription) {
-        const t0 = Date.now();
-        jsonlLoggerRef.current = new AudioJsonlLogger({
-          visitId: selectedPatientId,
-          patientId: selectedPatientId,
-          t0,
-        });
-        const segments = parsePatientSegments(visitData.transcription);
-        if (segments.length > 0) {
-          // Log each patient-only timestamped segment with analysis
-          const segmentsWithAnalysis = await Promise.all(
-            segments.map(async ({ tStart, tEnd, text }) => ({
-              tStart,
-              tEnd,
-              text,
-              keywordAnalysis: analyzeKeywords(text),
-              sentimentAnalysis: await analyzeSentiment(text),
-              semanticAnalysis: analyzeSemantics(text),
-            }))
-          );
-          jsonlLoggerRef.current.logPatientSegments(segmentsWithAnalysis);
-        } else {
-          // Fallback: no timestamped patient lines — treat full patient text as one window
-          const patientText = extractPatientText(visitData.transcription) || visitData.transcription;
-          const keywordAnalysis   = analyzeKeywords(patientText);
-          const sentimentAnalysis = await analyzeSentiment(patientText);
-          const semanticAnalysis  = analyzeSemantics(patientText);
-          jsonlLoggerRef.current.logWindow({
-            tStart: 0,
-            tEnd: parseFloat((visitData.transcription.trim().split(/\s+/).length / 2.5).toFixed(3)),
-            wordCount: patientText.trim().split(/\s+/).length,
-            keywordAnalysis,
-            sentimentAnalysis,
-            semanticAnalysis,
+      // Always ensure we have at least one window from the typed transcription.
+      // This covers both: (a) no recording done, (b) recording done but no mic data came through.
+      if (visitData.transcription) {
+        const patientText = extractPatientText(visitData.transcription) || visitData.transcription;
+        const keywordAnalysis   = analyzeKeywords(patientText);
+        const sentimentAnalysis = await analyzeSentiment(patientText);
+        const semanticAnalysis  = analyzeSemantics(patientText);
+
+        if (!jsonlLoggerRef.current) {
+          // No live recording — create a fresh logger
+          const t0 = Date.now();
+          jsonlLoggerRef.current = new AudioJsonlLogger({
+            visitId: selectedPatientId,
+            patientId: selectedPatientId,
+            t0,
           });
         }
+
+        // Always add a window from the full transcription text
+        // (complements any live windows already logged)
+        jsonlLoggerRef.current.logWindow({
+          tStart: 0,
+          tEnd: parseFloat((visitData.transcription.trim().split(/\s+/).length / 2.5).toFixed(3)),
+          wordCount: patientText.trim().split(/\s+/).length,
+          keywordAnalysis,
+          sentimentAnalysis,
+          semanticAnalysis,
+        });
       }
 
       if (jsonlLoggerRef.current) {
         jsonlLoggerRef.current.logSummary();
-        jsonlLoggerRef.current.download();
+        try {
+          await jsonlLoggerRef.current.flush('http://localhost:5000');
+          console.log('✅ audio.jsonl saved to Flask');
+        } catch (err) {
+          console.warn('Flask offline, falling back to download:', err.message);
+          jsonlLoggerRef.current.download();
+        }
         jsonlLoggerRef.current = null;
       }
 
@@ -812,21 +953,57 @@ export default function NewVisit() {
                   </div>
                 )}
               </div>
-
+              {/* Facial analysis section */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <h4 className="text-sm font-semibold text-teal-900">Facial Analysis</h4>
-                  <span className="text-xs text-gray-500">{camerasActive ? 'Live' : 'Idle'}</span>
+                  <span className="text-xs text-gray-500">
+                     {manifestStatus.face === 'done'
+                        ? 'Completed'
+                        : isFaceRunning
+                        ? 'Running'
+                        : camerasActive
+                        ? 'Preview Only'
+                        : 'Idle'}
+                  </span>
                 </div>
+
+                {/* Video preview*/}
                 <div className="relative bg-black rounded overflow-hidden" style={{aspectRatio: '4/3'}}>
                   <video ref={video2Ref} className="w-full h-full object-cover" playsInline muted />
                   <canvas ref={canvas2Ref} className="absolute inset-0 w-full h-full pointer-events-none" />
                 </div>
-                <p className="text-xs text-gray-600">Webcam preview for facial analysis. Your gait feed now comes from the RealSense backend.</p>
+
+                <div className="flex flex-wrap gap-2">
+                  {!camerasActive ? (
+                    <Button size="sm" variant="outline" onClick={startCameras} className="border-teal-200">
+                      Start Camera Preview
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="outline" onClick={stopCameras}>
+                      Stop Camera Preview
+                    </Button>
+                  )}
+
+                  {!isFaceRunning ? (
+                    <Button size="sm" onClick={handleStartFace}>
+                      Start Face Analysis
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="destructive" onClick={handleStopFace}>
+                      Stop Face Analysis
+                    </Button>
+                  )}
+                </div>
+
+                <p className="text-xs text-gray-600">
+                  Camera preview is local to the browser. Face analysis runs in the Python backend and writes results into the visit folder.
+                </p>
+
+                {faceError && (
+                  <p className="text-xs text-red-600">{faceError}</p>
+                )}
               </div>
-            </div>
-          </CardContent>
-        </Card>
 
         <Card className="border-teal-200 bg-white/80 backdrop-blur mb-4 mt-4">
           <CardHeader>
@@ -883,9 +1060,23 @@ export default function NewVisit() {
                 </div>
               )}
               {isTranscribing && !isStartingTranscription && (
-                <div className="flex items-center gap-2 text-xs text-blue-600">
-                  <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
-                  <span>Recording... Speak clearly into your microphone</span>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 text-xs text-blue-600">
+                    <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+                    <span>Recording... Speak clearly into your microphone</span>
+                  </div>
+                  {/* Manifest-backed subsystem status */}
+                  <div className="flex items-center gap-3 mt-1">
+                    <span className={`text-xs flex items-center gap-1 ${manifestStatus.audio === 'done' ? 'text-green-600' : 'text-slate-400'}`}>
+                      🎤 Audio {manifestStatus.audio === 'done' ? '✓' : '…'}
+                    </span>
+                    <span className={`text-xs flex items-center gap-1 ${manifestStatus.face === 'done' ? 'text-green-600' : manifestStatus.face === 'running' ? 'text-teal-600' : 'text-slate-400'}`}>
+                      😐 Face {manifestStatus.face === 'done' ? '✓' : manifestStatus.face === 'running' ? '●' : '…'}
+                    </span>
+                    <span className={`text-xs flex items-center gap-1 ${manifestStatus.gait === 'done' ? 'text-green-600' : 'text-slate-400'}`}>
+                      🚶 Gait {manifestStatus.gait === 'done' ? '✓' : '…'}
+                    </span>
+                  </div>
                 </div>
               )}
               {transcriptionError && (

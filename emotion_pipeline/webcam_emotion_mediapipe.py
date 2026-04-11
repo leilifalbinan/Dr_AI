@@ -36,7 +36,7 @@ from common_utils.orchestrator_utils import update_manifest_status
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-CHECKPOINT_PATH = PROJECT_ROOT / "models" / "facial_analysis" / "master_dataset_5class_v1.pth"
+CHECKPOINT_PATH = PROJECT_ROOT / "models" / "emotion" / "best_model.pth"
 
 EMOTION_LABELS = ["Angry", "Disgust", "Happy", "LowAffect", "Arousal"]
 NUM_CLASSES = len(EMOTION_LABELS)
