@@ -316,10 +316,10 @@ function FaceTab({ data }) {
 
   const emotionColors = {
     angry: "bg-red-400",
-    disgust: "bg-purple-400",
     happy: "bg-yellow-400",
-    low_affect: "bg-blue-400",
-    arousal: "bg-green-400",
+    sad: "bg-blue-400",
+    surprise: "bg-green-400",
+    neutral: "bg-slate-400",
   };
 
   return (

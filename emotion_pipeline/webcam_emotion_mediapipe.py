@@ -38,7 +38,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CHECKPOINT_PATH = PROJECT_ROOT / "models" / "emotion" / "best_model.pth"
 
-EMOTION_LABELS = ["Angry", "Disgust", "Happy", "LowAffect", "Arousal"]
+EMOTION_LABELS = ["Angry", "Happy", "Sad", "Surprise", "Neutral"];
 NUM_CLASSES = len(EMOTION_LABELS)
 
 label_history = deque(maxlen=10)
