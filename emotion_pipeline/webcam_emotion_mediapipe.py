@@ -112,6 +112,7 @@ def parse_args():
     ap.add_argument("--patient_id", default=None, help="Patient identifier")
     ap.add_argument("--visit_label", default=None, help="Visit label/date string")
     ap.add_argument("--runs_dir", default="runs", help="Directory to save visit logs")
+    ap.add_argument("--camera_index", type=int, default=0, help="OpenCV camera index")
     return ap.parse_args()
 
 def get_visit_t0(visit_dir: Path) -> tuple[float, bool]:
@@ -197,7 +198,8 @@ def main():
     total_samples = 0
     latency_history = []
 
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(args.camera_index, cv2.CAP_DSHOW)
+    print(f"[INFO] Opening camera index {args.camera_index}")   # optional
     if not cap.isOpened():
         print("[Error] Could not open webcam.")
         return

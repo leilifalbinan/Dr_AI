@@ -42,6 +42,9 @@ def get_latest_summary(records: list[dict]) -> dict | None:
         return None
     return summaries[-1]
 
+#===================================================================================
+#Helper Functions for facial analysis
+#=====================================================================================
 
 def make_face_bar_chart(emotion_pct: dict, out_path: Path) -> None:
     labels = list(emotion_pct.keys())
@@ -221,7 +224,9 @@ def build_face_serial_trends(runs_dir: Path, patient_id: str, current_visit_dir:
     return section, figures
 
 #==========================================================================
-#Process each subsystem's output and produce a structured section for the report, along with any figures to be included. For now we have a simple implementation for face, and placeholders for audio and gait which can be filled in as those subsystems are integrated.
+#Process each subsystem's output and produce a structured section for the report, along with any figures to be included. 
+#For now we have a simple implementation for face, and placeholders for audio and gait which can be filled in as those
+#subsystems are integrated.
 #========================================================================
 
 # Face: Currently processses summary record only, can be extended to do more complex processing of the raw records if needed in the future

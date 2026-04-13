@@ -13,6 +13,7 @@ env/
 .venv_face/
 .venv_backend/
 .venv_transc/
+.venv_global/
 
 # --------------------------
 # Python bytecode/cache

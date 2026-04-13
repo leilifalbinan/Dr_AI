@@ -71,6 +71,7 @@ export default function NewVisit() {
   // Face refs/state
   const [isFaceRunning, setIsFaceRunning] = useState(false);
   const [faceError, setFaceError] = useState(null);
+  const [cameraIndex, setCameraIndex] = useState("1");
 
   // Gait refs/state
   const [isGaitRunning, setIsGaitRunning] = useState(false);
@@ -239,7 +240,8 @@ export default function NewVisit() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         visit_id: selectedPatientId,
-        patient_id: selectedPatientId
+        patient_id: selectedPatientId,
+        camera_index: Number(cameraIndex),
       })
     });
 
@@ -960,6 +962,19 @@ const handleStopFace = async () => {
                         : 'Idle'}
                   </span>
                 </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs text-slate-600">Camera Source</Label>
+                  <select
+                  value={cameraIndex}
+                  onChange={(e) => setCameraIndex(e.target.value)}
+                  className="w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-xs"
+                >
+                  <option value="1">External webcam (recommended)</option>
+                  <option value="0">Laptop webcam</option>
+                  <option value="2">Other camera</option>
+                </select>
+              </div>
 
                 {/* Video preview*/}
                 <div className="relative bg-black rounded overflow-hidden" style={{aspectRatio: '4/3'}}>

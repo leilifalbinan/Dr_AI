@@ -477,6 +477,7 @@ def start_face_analysis():
     data = request.get_json(silent=True) or {}
     visit_id = data.get("visit_id")
     patient_id = data.get("patient_id")
+    camera_index = int(data.get("camera_index", 1))  # change default to 0 if want to use laptop webcam
 
     if not visit_id or not patient_id:
         return jsonify({"error": "visit_id and patient_id are required"}), 400
@@ -515,6 +516,7 @@ def start_face_analysis():
         "--visit_id", str(visit_id),
         "--patient_id", str(patient_id),
         "--runs_dir", str(RUNS_DIR.resolve()),
+        "--camera_index", str(camera_index),
     ]
 
     try:
