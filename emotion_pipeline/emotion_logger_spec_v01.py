@@ -24,7 +24,7 @@ class EmotionVisitLogger:
         model_version: str = "resnet34_5class_v3",
     ):
         if emotion_labels is None:
-            emotion_labels = ['Angry', 'Disgust', 'Happy', 'LowAffect', 'Arousal']
+            emotion_labels = ['Angry', 'Happy', 'Sad', 'Surprise', 'Neutral']
         
         if metadata_fields is None:
             metadata_fields = ["patient_id", "visit_label"]
@@ -36,10 +36,10 @@ class EmotionVisitLogger:
         # Map emotion labels to lowercase keys (per spec)
         self.emotion_key_map = {
             'Angry': 'angry',
-            'Disgust': 'disgust',
             'Happy': 'happy',
-            'LowAffect': 'low_affect',
-            'Arousal': 'arousal'
+            'Sad': 'sad',
+            'Surprise': 'surprise',
+            'Neutral': 'neutral'
         }
         
         # Set up runs directory

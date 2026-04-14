@@ -8,7 +8,12 @@
 venv/
 venv_training/
 venv_runtime/
+.venv_runtime/
 env/
+.venv_face/
+.venv_backend/
+.venv_transc/
+.venv_global/
 
 # --------------------------
 # Python bytecode/cache
@@ -90,3 +95,4 @@ dist
 # Zip files
 *.zip
 
+gait_outputs/

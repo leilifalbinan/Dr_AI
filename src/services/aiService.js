@@ -411,6 +411,32 @@ export const analyzeSemantics = (text) => {
 
 
 
+const buildGaitClinicalContext = (visitData) => {
+  if (typeof visitData !== 'object' || !visitData.gait_summary) {
+    return '';
+  }
+
+  const gait = visitData.gait_summary;
+  let block = '\n\nGait / Motion Analysis:';
+
+  if (visitData.gait_summary_text) {
+    block += `\n- Summary: ${visitData.gait_summary_text}`;
+  } else if (gait.summary_text) {
+    block += `\n- Summary: ${gait.summary_text}`;
+  }
+  if (gait.mean_speed_mps != null) block += `\n- Mean gait speed: ${gait.mean_speed_mps} m/s`;
+  if (gait.cadence_spm != null) block += `\n- Cadence: ${gait.cadence_spm} steps/min`;
+  if (gait.num_steps_est != null) block += `\n- Estimated number of steps: ${gait.num_steps_est}`;
+  if (gait.knee_symmetry_index_percent != null) block += `\n- Knee symmetry index: ${gait.knee_symmetry_index_percent}%`;
+  if (gait.stability_ap_rms_m != null) block += `\n- AP stability RMS: ${gait.stability_ap_rms_m} m`;
+  if (gait.stability_ml_rms_m != null) block += `\n- ML stability RMS: ${gait.stability_ml_rms_m} m`;
+  if (gait.stability_planar_rms_m != null) block += `\n- Planar stability RMS: ${gait.stability_planar_rms_m} m`;
+  if (gait.sit_to_stand_detected != null) block += `\n- Sit-to-stand detected: ${gait.sit_to_stand_detected ? 'yes' : 'no'}`;
+  if (gait.sit_to_stand_time_s != null) block += `\n- Sit-to-stand time: ${gait.sit_to_stand_time_s} s`;
+
+  return block;
+};
+
 // OpenAI API call
 const callOpenAI = async (visitData) => {
   if (!OPENAI_API_KEY) {
@@ -462,6 +488,8 @@ const callOpenAI = async (visitData) => {
     if (visitData.physician_notes && visitData.physician_notes.trim()) {
       clinicalContext += `\n\nPhysician's Clinical Observations:\n${visitData.physician_notes}`;
     }
+
+    clinicalContext += buildGaitClinicalContext(visitData);
   }
 
   const multimodalAppendix = buildMultimodalPromptAppendix(
@@ -564,6 +592,8 @@ const callOllama = async (visitData) => {
     if (visitData.physician_notes && visitData.physician_notes.trim()) {
       clinicalContext += `\n\nPhysician's Clinical Observations:\n${visitData.physician_notes}`;
     }
+
+    clinicalContext += buildGaitClinicalContext(visitData);
   }
 
   const multimodalAppendix = buildMultimodalPromptAppendix(
