@@ -42,17 +42,16 @@ ChartJS.register(
   Filler
 );
 
+/** Five-class face model: Happy, Angry, Neutral, Sad, Surprise (keys lowercase). */
 const EMO_COLORS = {
   happy: "#f4a261",
   angry: "#e63946",
-  disgust: "#a8dadc",
-  low_affect: "#457b9d",
-  arousal: "#94a3b8",
-  sad: "#6d6875",
-  fear: "#e9c46a",
-  neutral: "#8ecae6",
+  neutral: "#94a3b8",
+  sad: "#457b9d",
   surprise: "#ffb703",
 };
+
+const EMOTION_CLASS_ORDER = ["happy", "angry", "neutral", "sad", "surprise"];
 
 function emoColor(key) {
   return EMO_COLORS[key] || "#94a3b8";
@@ -72,7 +71,8 @@ function avgConf(recs) {
 }
 
 function labelEmo(key) {
-  return key.replace(/_/g, " ");
+  const s = String(key).replace(/_/g, " ");
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 }
 
 function qualLabel(v, low, mid) {
@@ -294,12 +294,9 @@ export default function ReportSummary() {
     const allRecs = [...face, ...audio, ...gait];
     if (!allRecs.length) return null;
     const first = allRecs[0];
-    const phases = [...new Set(allRecs.map((r) => r.phase))];
     return {
       visitId: visitIdParam,
       patientId: loadedVisit?.patient_id ?? first.patient_id ?? "—",
-      phase: phases.join(", "),
-      schema: first.schema_version ?? "v0.1",
     };
   }, [face, audio, gait, visitIdParam, loadedVisit]);
 
@@ -336,7 +333,13 @@ export default function ReportSummary() {
     }
 
     const sorted = Object.entries(emotionPct).sort((a, b) => b[1] - a[1]);
-    const allEmos = [...new Set(windows.flatMap((w) => Object.keys(w.features?.emotion_counts || {})))];
+    const allEmos = [...new Set(windows.flatMap((w) => Object.keys(w.features?.emotion_counts || {})))].sort(
+      (a, b) => {
+        const ia = EMOTION_CLASS_ORDER.indexOf(a);
+        const ib = EMOTION_CLASS_ORDER.indexOf(b);
+        return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+      }
+    );
     const timelineLabels = windows.map((w) => `${w.t_start}s–${w.t_end}s`);
     const timelineDatasets = allEmos.map((emo) => ({
       label: labelEmo(emo),
@@ -696,6 +699,9 @@ export default function ReportSummary() {
                 gaitDerived,
                 aiAssessment,
                 serialVisits: demoSerialVisitSnapshots,
+                multimodalConfidence: { co, cf, ca, cg },
+                recordCounts: { face: face.length, audio: audio.length, gait: gait.length },
+                nlpVisit,
               })
             }
           >
@@ -744,14 +750,6 @@ export default function ReportSummary() {
                       <p className="leading-snug">{patient.primary_diagnosis}</p>
                     </div>
                   ) : null}
-                  <div>
-                    <p className="text-[0.65rem] uppercase tracking-wider text-teal-300/90">Phase</p>
-                    <p className="font-mono font-semibold">{visitMeta.phase}</p>
-                  </div>
-                  <div>
-                    <p className="text-[0.65rem] uppercase tracking-wider text-teal-300/90">Schema</p>
-                    <p className="font-mono font-semibold">{visitMeta.schema}</p>
-                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -778,58 +776,70 @@ export default function ReportSummary() {
                     <p className="text-teal-900 leading-snug">{vitalsDisplay.chief_complaint}</p>
                   </div>
                 ) : null}
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-2 gap-2 items-stretch">
                   {vitalsDisplay.bp_systolic != null && vitalsDisplay.bp_diastolic != null && (
-                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2 text-center">
-                      <p className="text-lg font-bold text-teal-900 font-mono">
+                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2.5 flex flex-col items-center justify-center gap-1 min-h-[4.5rem] min-w-0 text-center">
+                      <p className="text-[0.6rem] text-teal-600 uppercase tracking-wide leading-tight">BP mmHg</p>
+                      <p className="text-lg font-bold text-teal-900 font-mono tabular-nums leading-tight">
                         {vitalsDisplay.bp_systolic}/{vitalsDisplay.bp_diastolic}
                       </p>
-                      <p className="text-[0.6rem] text-teal-600 uppercase">BP mmHg</p>
                     </div>
                   )}
                   {vitalsDisplay.heart_rate != null && vitalsDisplay.heart_rate !== "" && (
-                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2 text-center">
-                      <p className="text-lg font-bold text-teal-900 font-mono">{vitalsDisplay.heart_rate}</p>
-                      <p className="text-[0.6rem] text-teal-600 uppercase">HR bpm</p>
+                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2.5 flex flex-col items-center justify-center gap-1 min-h-[4.5rem] min-w-0 text-center">
+                      <p className="text-[0.6rem] text-teal-600 uppercase tracking-wide leading-tight">HR bpm</p>
+                      <p className="text-lg font-bold text-teal-900 font-mono tabular-nums leading-tight">
+                        {vitalsDisplay.heart_rate}
+                      </p>
                     </div>
                   )}
                   {vitalsDisplay.respiratory_rate != null && vitalsDisplay.respiratory_rate !== "" && (
-                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2 text-center">
-                      <p className="text-lg font-bold text-teal-900 font-mono">{vitalsDisplay.respiratory_rate}</p>
-                      <p className="text-[0.6rem] text-teal-600 uppercase">RR /min</p>
+                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2.5 flex flex-col items-center justify-center gap-1 min-h-[4.5rem] min-w-0 text-center">
+                      <p className="text-[0.6rem] text-teal-600 uppercase tracking-wide leading-tight">RR /min</p>
+                      <p className="text-lg font-bold text-teal-900 font-mono tabular-nums leading-tight">
+                        {vitalsDisplay.respiratory_rate}
+                      </p>
                     </div>
                   )}
                   {vitalsDisplay.temperature != null && vitalsDisplay.temperature !== "" && (
-                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2 text-center">
-                      <p className="text-lg font-bold text-teal-900 font-mono">
+                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2.5 flex flex-col items-center justify-center gap-1 min-h-[4.5rem] min-w-0 text-center">
+                      <p className="text-[0.6rem] text-teal-600 uppercase tracking-wide leading-tight">Temp</p>
+                      <p className="text-lg font-bold text-teal-900 font-mono tabular-nums leading-tight">
                         {vitalsDisplay.temperature}
                         {vitalsDisplay.temperature_unit === "celsius" ? " °C" : " °F"}
                       </p>
-                      <p className="text-[0.6rem] text-teal-600 uppercase">Temp</p>
                     </div>
                   )}
                   {vitalsDisplay.spo2 != null && vitalsDisplay.spo2 !== "" && (
-                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2 text-center">
-                      <p className="text-lg font-bold text-teal-900 font-mono">{vitalsDisplay.spo2}%</p>
-                      <p className="text-[0.6rem] text-teal-600 uppercase">SpO₂</p>
+                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2.5 flex flex-col items-center justify-center gap-1 min-h-[4.5rem] min-w-0 text-center">
+                      <p className="text-[0.6rem] text-teal-600 uppercase tracking-wide leading-tight">SpO₂</p>
+                      <p className="text-lg font-bold text-teal-900 font-mono tabular-nums leading-tight">
+                        {vitalsDisplay.spo2}%
+                      </p>
                     </div>
                   )}
                   {vitalsDisplay.height != null && vitalsDisplay.height !== "" && (
-                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2 text-center">
-                      <p className="text-lg font-bold text-teal-900 font-mono">{vitalsDisplay.height}</p>
-                      <p className="text-[0.6rem] text-teal-600 uppercase">H cm</p>
+                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2.5 flex flex-col items-center justify-center gap-1 min-h-[4.5rem] min-w-0 text-center">
+                      <p className="text-[0.6rem] text-teal-600 uppercase tracking-wide leading-tight">H cm</p>
+                      <p className="text-lg font-bold text-teal-900 font-mono tabular-nums leading-tight">
+                        {vitalsDisplay.height}
+                      </p>
                     </div>
                   )}
                   {vitalsDisplay.weight != null && vitalsDisplay.weight !== "" && (
-                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2 text-center">
-                      <p className="text-lg font-bold text-teal-900 font-mono">{vitalsDisplay.weight}</p>
-                      <p className="text-[0.6rem] text-teal-600 uppercase">W kg</p>
+                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2.5 flex flex-col items-center justify-center gap-1 min-h-[4.5rem] min-w-0 text-center">
+                      <p className="text-[0.6rem] text-teal-600 uppercase tracking-wide leading-tight">W kg</p>
+                      <p className="text-lg font-bold text-teal-900 font-mono tabular-nums leading-tight">
+                        {vitalsDisplay.weight}
+                      </p>
                     </div>
                   )}
                   {vitalsDisplay.bmi != null && vitalsDisplay.bmi !== "" && (
-                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2 text-center col-span-2">
-                      <p className="text-lg font-bold text-teal-900 font-mono">{vitalsDisplay.bmi}</p>
-                      <p className="text-[0.6rem] text-teal-600 uppercase">BMI</p>
+                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2.5 flex flex-col items-center justify-center gap-1 min-h-[4.5rem] min-w-0 text-center">
+                      <p className="text-[0.6rem] text-teal-600 uppercase tracking-wide leading-tight">BMI</p>
+                      <p className="text-lg font-bold text-teal-900 font-mono tabular-nums leading-tight">
+                        {vitalsDisplay.bmi}
+                      </p>
                     </div>
                   )}
                 </div>

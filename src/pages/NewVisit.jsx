@@ -476,10 +476,10 @@ export default function NewVisit() {
               <Label htmlFor="patient" className="text-sm font-medium text-teal-900">Select Patient *</Label>
               <div className="flex gap-2">
                 <Select value={selectedPatientId} onValueChange={setSelectedPatientId}>
-                  <SelectTrigger className="flex-1">
+                  <SelectTrigger className="flex-1 border-teal-200 bg-white/90 focus:ring-teal-500 data-[placeholder]:text-teal-600/60">
                     <SelectValue placeholder="Choose a patient" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="border-teal-200">
                     {patients.map((patient) => (
                       <SelectItem key={patient.id} value={patient.id}>
                         {patient.first_name} {patient.last_name} {patient.medical_record_number && `(MRN: ${patient.medical_record_number})`}

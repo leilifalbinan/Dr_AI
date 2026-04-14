@@ -4,7 +4,8 @@
  */
 
 function labelEmo(key) {
-  return String(key).replace(/_/g, " ");
+  const s = String(key).replace(/_/g, " ");
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 }
 
 /**

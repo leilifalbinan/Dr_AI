@@ -248,38 +248,38 @@ export default function ReportSerialTrends() {
       labels,
       datasets: [
         {
-          label: "Low affect (%)",
-          data: snaps.map((s) => s.face_low_affect_pct),
-          borderColor: "#1d4ed8",
-          backgroundColor: "rgba(29,78,216,0.08)",
-          tension: 0.25,
-        },
-        {
-          label: "Arousal (%)",
-          data: snaps.map((s) => s.face_arousal_pct),
-          borderColor: "#64748b",
-          backgroundColor: "rgba(100,116,139,0.08)",
-          tension: 0.25,
-        },
-        {
-          label: "Disgust (%)",
-          data: snaps.map((s) => s.face_disgust_pct),
-          borderColor: "#7c2d12",
-          backgroundColor: "rgba(124,45,18,0.08)",
+          label: "Happy (%)",
+          data: snaps.map((s) => s.face_happy_pct),
+          borderColor: "#f4a261",
+          backgroundColor: "rgba(244,162,97,0.12)",
           tension: 0.25,
         },
         {
           label: "Angry (%)",
           data: snaps.map((s) => s.face_angry_pct),
-          borderColor: "#b91c1c",
-          backgroundColor: "rgba(185,28,28,0.08)",
+          borderColor: "#e63946",
+          backgroundColor: "rgba(230,57,70,0.1)",
           tension: 0.25,
         },
         {
-          label: "Happy (%)",
-          data: snaps.map((s) => s.face_happy_pct),
-          borderColor: "#f59e0b",
-          backgroundColor: "rgba(245,158,11,0.08)",
+          label: "Neutral (%)",
+          data: snaps.map((s) => s.face_neutral_pct),
+          borderColor: "#94a3b8",
+          backgroundColor: "rgba(148,163,184,0.1)",
+          tension: 0.25,
+        },
+        {
+          label: "Sad (%)",
+          data: snaps.map((s) => s.face_sad_pct),
+          borderColor: "#457b9d",
+          backgroundColor: "rgba(69,123,157,0.1)",
+          tension: 0.25,
+        },
+        {
+          label: "Surprise (%)",
+          data: snaps.map((s) => s.face_surprise_pct),
+          borderColor: "#ffb703",
+          backgroundColor: "rgba(255,183,3,0.12)",
           tension: 0.25,
         },
       ],
@@ -655,7 +655,7 @@ export default function ReportSerialTrends() {
                 Face subsystem
               </CardTitle>
               <p className="text-sm text-teal-600 font-normal mt-1">
-                Emotion distribution (low affect, arousal, disgust, anger, happy) over visits
+                Emotion distribution (happy, angry, neutral, sad, surprise) over visits
               </p>
             </CardHeader>
             <CardContent className="px-4 sm:px-6 pb-6 pt-4">

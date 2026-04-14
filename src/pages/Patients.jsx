@@ -100,17 +100,17 @@ export default function Patients() {
   });
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-teal-50 via-green-50 to-emerald-50 p-6">
+    <div className="min-h-screen bg-gradient-to-br from-teal-50 via-green-50 to-emerald-50 p-8">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
           <div>
-            <h1 className="text-3xl font-bold text-slate-900 mb-2">Patient Management</h1>
-            <p className="text-slate-600">Track and analyze patient progress over time</p>
+            <h1 className="text-3xl font-bold text-teal-900 mb-2">Patient Management</h1>
+            <p className="text-lg text-teal-700">Track and analyze patient progress over time</p>
           </div>
           <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
             <DialogTrigger asChild>
-              <Button className="bg-blue-600 hover:bg-blue-700">
+              <Button className="bg-teal-600 hover:bg-teal-700">
                 <Plus className="w-4 h-4 mr-2" />
                 Add New Patient
               </Button>
@@ -191,7 +191,7 @@ export default function Patients() {
               </div>
               <div className="flex justify-end gap-3">
                 <Button variant="outline" onClick={() => setShowAddDialog(false)}>Cancel</Button>
-                <Button onClick={handleCreatePatient} disabled={!newPatient.first_name || !newPatient.last_name || !newPatient.date_of_birth}>
+                <Button className="bg-teal-600 hover:bg-teal-700" onClick={handleCreatePatient} disabled={!newPatient.first_name || !newPatient.last_name || !newPatient.date_of_birth}>
                   Create Patient
                 </Button>
               </div>
@@ -200,35 +200,35 @@ export default function Patients() {
         </div>
 
         {/* Search */}
-        <Card className="bg-white border-none shadow-lg mb-6">
+        <Card className="border-teal-200 bg-white/80 backdrop-blur mb-6">
           <CardContent className="pt-6">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 w-5 h-5" />
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-teal-400 w-5 h-5" />
               <Input
                 placeholder="Search by name or medical record number..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
+                className="pl-10 border-teal-200 focus-visible:ring-teal-500"
               />
             </div>
           </CardContent>
         </Card>
 
         {/* Patients List */}
-        <Card className="bg-white border-none shadow-lg">
+        <Card className="border-teal-200 bg-white/80 backdrop-blur">
           <CardHeader>
-            <CardTitle className="text-xl font-bold text-slate-900">
+            <CardTitle className="text-base font-semibold text-teal-900">
               All Patients ({filteredPatients.length})
             </CardTitle>
           </CardHeader>
           <CardContent>
             {isLoading ? (
-              <div className="text-center py-12 text-slate-500">Loading patients...</div>
+              <div className="text-center py-12 text-teal-600 text-sm">Loading patients...</div>
             ) : filteredPatients.length === 0 ? (
               <div className="text-center py-12">
-                <User className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-                <p className="text-slate-500 mb-4">No patients found</p>
-                <Button onClick={() => setShowAddDialog(true)}>Add First Patient</Button>
+                <User className="w-12 h-12 text-teal-300 mx-auto mb-3" />
+                <p className="text-sm text-teal-600 mb-4">No patients found</p>
+                <Button className="bg-teal-600 hover:bg-teal-700" onClick={() => setShowAddDialog(true)}>Add First Patient</Button>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -238,34 +238,34 @@ export default function Patients() {
                       to={createPageUrl(`PatientAnalysis?id=${patient.id}`)}
                       className="block"
                     >
-                      <div className="p-5 border border-slate-200 rounded-lg hover:bg-slate-50 hover:border-blue-300 hover:shadow-md transition-all">
+                      <div className="p-5 border border-teal-200 rounded-lg hover:bg-teal-50/50 hover:border-teal-300 transition-all">
                         <div className="flex items-start justify-between mb-3">
                           <div className="flex items-center gap-3">
-                            <div className="w-12 h-12 bg-gradient-to-br from-blue-400 to-blue-600 rounded-full flex items-center justify-center text-white font-bold text-lg">
+                            <div className="w-12 h-12 bg-gradient-to-br from-teal-400 to-teal-600 rounded-full flex items-center justify-center text-white font-bold text-lg">
                               {patient.first_name[0]}{patient.last_name[0]}
                             </div>
                             <div>
-                              <h3 className="font-bold text-slate-900">
+                              <h3 className="font-semibold text-teal-900">
                                 {patient.first_name} {patient.last_name}
                               </h3>
-                              <p className="text-sm text-slate-500">
+                              <p className="text-sm text-teal-700">
                                 Age {calculateAge(patient.date_of_birth)}
                               </p>
                             </div>
                           </div>
                         </div>
                         {patient.medical_record_number && (
-                          <p className="text-xs text-slate-500 mb-2">MRN: {patient.medical_record_number}</p>
+                          <p className="text-xs text-teal-600 mb-2">MRN: {patient.medical_record_number}</p>
                         )}
                         {patient.primary_diagnosis && (
                           <p className="text-sm text-slate-700 mb-3">{patient.primary_diagnosis}</p>
                         )}
-                        <div className="flex items-center justify-between pt-3 border-t border-slate-200">
-                          <div className="flex items-center gap-2 text-sm text-slate-600">
-                            <TrendingUp className="w-4 h-4" />
+                        <div className="flex items-center justify-between pt-3 border-t border-teal-100">
+                          <div className="flex items-center gap-2 text-sm text-teal-800">
+                            <TrendingUp className="w-4 h-4 text-teal-600" />
                             <span>{getPatientVisitCount(patient.id)} visits</span>
                           </div>
-                          <span className="text-xs text-slate-400">
+                          <span className="text-xs text-teal-600">
                             Added {format(new Date(patient.created_date), 'MMM d, yyyy')}
                           </span>
                         </div>
