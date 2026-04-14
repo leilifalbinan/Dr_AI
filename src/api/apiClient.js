@@ -296,7 +296,18 @@ function healCanonicalDemoRows() {
       return;
     }
     const cur = visits[idx];
-    if (cur.patient_id !== seed.patient_id || cur.chief_complaint !== seed.chief_complaint || cur.visit_date !== seed.visit_date) {
+    const hasSeedDrift =
+      cur.patient_id !== seed.patient_id ||
+      cur.chief_complaint !== seed.chief_complaint ||
+      cur.visit_date !== seed.visit_date ||
+      cur.transcription !== seed.transcription ||
+      cur.physician_notes !== seed.physician_notes ||
+      JSON.stringify(cur.keyword_analysis || null) !== JSON.stringify(seed.keyword_analysis || null) ||
+      JSON.stringify(cur.sentiment_analysis || null) !== JSON.stringify(seed.sentiment_analysis || null) ||
+      JSON.stringify(cur.semantic_analysis || null) !== JSON.stringify(seed.semantic_analysis || null) ||
+      JSON.stringify(cur.ai_assessment || null) !== JSON.stringify(seed.ai_assessment || null);
+
+    if (hasSeedDrift) {
       visits[idx] = { ...seed };
       changed = true;
     }

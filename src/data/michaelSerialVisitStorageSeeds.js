@@ -5,10 +5,61 @@
 import { demoSerialVisitSnapshots } from "@/data/reportSerialTrendDemoData";
 
 const TRANSCRIPTIONS = [
-  `I've noticed a slight shake in my right hand when it's resting on my lap for the past few months. Walking feels a little slower than before but I can still do my usual walks. No falls. Sleep has been okay. I'm not on any Parkinson medications yet.`,
-  `The tremor is more obvious now and my legs feel stiff, especially in the morning. Turning when I walk is harder and I have to take smaller steps. I'm more tired by the afternoon. Still driving short distances. Family says I'm not swinging my right arm as much when I walk.`,
-  `The resting tremor in my right hand is much more noticeable. I'm slower getting up from a chair, turning takes several steps, and my wife says I shuffle. My handwriting has gotten smaller, my voice is softer, and I'm wiped out after routine housework. No falls yet but I'm nervous about balance.`,
-  `I saw neurology since last time. We're adjusting medication timing. Tremor is still there but I'm a bit steadier on flat ground. Stiffness is ongoing. I had one near-trip on a curb but caught myself. I want to focus on staying active safely and knowing what to watch for.`,
+  `[00:00] Doctor: Good morning, Michael. Tell me what changes you have noticed since your last routine checkup.
+[00:12] Patient: Over the last few months I noticed a slight shake in my right hand when it rests in my lap, especially in the evening.
+[00:26] Doctor: Does the tremor happen while you are using the hand, or mainly at rest?
+[00:35] Patient: Mostly at rest. If I pick something up it calms down a little, but when I sit still it comes back.
+[00:49] Doctor: How is your walking and daily activity overall?
+[00:57] Patient: I can still do my neighborhood walk, but my pace is slower and I feel like my first few steps are stiff.
+[01:12] Doctor: Any falls, near falls, or trouble turning around corners?
+[01:20] Patient: No falls and no near misses yet, just a little cautious when I pivot in tight spaces.
+[01:33] Doctor: How are sleep, mood, and energy through the day?
+[01:41] Patient: Sleep is fair, mood is okay, and I still do chores, but I get tired sooner than I used to.
+[01:56] Doctor: Are you taking any medication specifically for tremor or Parkinson symptoms?
+[02:04] Patient: Not yet. I wanted to discuss options after getting a clearer diagnosis.
+[02:18] Doctor: That makes sense. We will document this as an early, mild presentation and track progression closely.`,
+  `[00:00] Doctor: Michael, at this follow-up, what symptoms are most disruptive right now?
+[00:10] Patient: The tremor is definitely more obvious and my legs feel tight in the mornings for about an hour.
+[00:24] Doctor: Has your gait changed compared with the last visit?
+[00:31] Patient: Yes, I take smaller steps and turning feels clumsy, like I need extra steps to line myself up.
+[00:46] Doctor: Any feedback from family members about movement differences?
+[00:53] Patient: My wife says I do not swing my right arm much anymore and I look stiffer when I walk.
+[01:07] Doctor: Are you still driving and handling errands safely?
+[01:14] Patient: I still drive short trips in daylight and avoid heavy traffic because I feel slower reacting.
+[01:28] Doctor: How does fatigue affect your afternoons?
+[01:35] Patient: By late afternoon I feel drained, so tasks like grocery shopping take longer and I need breaks.
+[01:49] Doctor: Any falls, freezing episodes, or balance scares?
+[01:56] Patient: No full falls, but I had two moments where I felt unsteady stepping off a curb.
+[02:11] Doctor: We should escalate objective motor tracking and discuss early therapy support to preserve function.
+[02:23] Patient: I agree. I want to stay independent and keep moving as safely as I can.`,
+  `[00:00] Doctor: Thanks for coming in, Michael. Give me a full update since the last appointment.
+[00:12] Patient: The resting tremor in my right hand is much stronger now and people notice it when I am sitting.
+[00:26] Doctor: What about transitions like standing up or turning?
+[00:34] Patient: Getting out of a chair is slower, and when I turn it takes several small steps instead of one smooth turn.
+[00:49] Doctor: Have you noticed any handwriting or voice changes?
+[00:56] Patient: Yes, my handwriting is smaller and cramped, and my family says my voice sounds quieter by evening.
+[01:11] Doctor: How has this affected your home routine and confidence?
+[01:18] Patient: Routine chores wipe me out, and I am worried about balance even though I have not fallen yet.
+[01:33] Doctor: Any specific near-fall moments?
+[01:39] Patient: A few stumbles in the kitchen when I turned quickly, but I caught myself each time.
+[01:52] Doctor: Are symptoms fluctuating during the day or mostly constant?
+[01:59] Patient: Mornings are stiff, midday is a little better, and evenings are when tremor and fatigue peak.
+[02:14] Doctor: This pattern supports progression to moderate motor impact, so we need structured treatment planning.
+[02:26] Patient: I am ready to start whatever helps with mobility and lowers my risk of falling.`,
+  `[00:00] Doctor: Michael, I saw your neurology note. How have you felt since adjusting medication timing?
+[00:13] Patient: I feel a little steadier on flat ground, especially mid-morning, but the tremor is still present.
+[00:27] Doctor: Is stiffness improved, unchanged, or worse?
+[00:34] Patient: Mostly unchanged, especially in my hips and right leg when I first get moving.
+[00:46] Doctor: Any gait safety events since we last met?
+[00:52] Patient: I had one near-trip at a curb last week, but I caught myself on a railing.
+[01:05] Doctor: Did you notice freezing, rushing, or distraction at that moment?
+[01:13] Patient: I was turning and carrying a bag, and my feet felt briefly stuck before I regained balance.
+[01:27] Doctor: How are energy and daily function with the current regimen?
+[01:34] Patient: Energy is slightly better than before, but longer chores still leave me fatigued.
+[01:47] Doctor: Are you comfortable with physical therapy and home safety modifications now?
+[01:55] Patient: Yes, I want exercises for turning and balance, and clear warning signs for when to call sooner.
+[02:09] Doctor: Great. We will continue medication optimization, start PT-focused gait work, and reinforce fall prevention.
+[02:21] Patient: That plan feels practical. I want to stay active without pushing past safe limits.`,
 ];
 
 const PHYSICIAN_NOTES = [
