@@ -14,6 +14,7 @@ env/
 .venv_backend/
 .venv_transc/
 .venv_global/
+.venv_test/
 
 # --------------------------
 # Python bytecode/cache
