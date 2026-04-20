@@ -15,6 +15,9 @@ import { compareAllModels, getConsensusResult, analyzeKeywords, analyzeSentiment
 import { transcriptionService } from "@/services/transcriptionService";
 import { AudioJsonlLogger, makeRelativeTimer, parsePatientSegments } from "@/utils/jsonlLogger";
 import { demoFace, demoAudio, demoGait } from "@/data/reportSummaryDemoData";
+
+const FLASK_URL = "http://localhost:5000"; //for facial analysis
+
 function formatTranscriptionForDisplay(text, useSpeakerLabels = true) {
   if (!text) return text;
   if (!useSpeakerLabels) {
@@ -1014,9 +1017,19 @@ const handleStopFace = async () => {
               </div>
 
                 {/* Video preview*/}
-                <div className="relative bg-black rounded overflow-hidden" style={{aspectRatio: '4/3'}}>
-                  <video ref={video2Ref} className="w-full h-full object-cover" playsInline muted />
-                  <canvas ref={canvas2Ref} className="absolute inset-0 w-full h-full pointer-events-none" />
+                <div className="relative bg-black rounded overflow-hidden" style={{ aspectRatio: '4/3' }}>
+                  {isFaceRunning ? (
+                    <img
+                      src={`${FLASK_URL}/api/face/live/${selectedPatientId}?t=${Date.now()}`}
+                      alt="Live facial analysis"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <>
+                      <video ref={video2Ref} className="w-full h-full object-cover" playsInline muted />
+                      <canvas ref={canvas2Ref} className="absolute inset-0 w-full h-full pointer-events-none" />
+                    </>
+                  )}
                 </div>
 
                 <div className="flex flex-wrap gap-2">
@@ -1040,9 +1053,9 @@ const handleStopFace = async () => {
                     </Button>
                   )}
                 </div>
-
+                
                 <p className="text-xs text-gray-600">
-                  Camera preview is local to the browser. Face analysis runs in the Python backend and writes results into the visit folder.
+                  Before start: local browser preview. During analysis: live backend-processed facial stream displayed here.
                 </p>
 
                 {faceError && (
