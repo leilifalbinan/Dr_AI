@@ -18,7 +18,6 @@ import torch.nn.functional as F
 from collections import deque, Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from emotion_logger_spec_v01 import EmotionVisitLogger
 import statistics
 import json
 import os
@@ -28,8 +27,9 @@ import sys
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
-from common_utils.orchestrator_utils import update_manifest_status  
 
+from common_utils.orchestrator_utils import update_manifest_status  
+from emotion_pipeline.emotion_logger_spec_v01 import EmotionVisitLogger
 # ==========================
 # CONFIG
 # ==========================
@@ -160,143 +160,146 @@ def get_visit_t0(visit_dir: Path) -> tuple[float, bool]:
     print("[INFO] Standalone mode: Using current time as t0")
     return t0, False
 
-# ==========================
-# MAIN
-# ==========================
+# turn script into an importable worker for the GUI
+def run_face_analysis(
+    visit_id: str,
+    patient_id: str,
+    visit_label: str | None = None,
+    runs_dir: str | Path = "runs",
+    camera_index: int = 0,
+    frame_callback=None,
+    stop_checker=None,
+    show_window: bool = False,
+):
+    runs_dir = Path(runs_dir)
+    visit_dir = runs_dir / f"visit_{visit_id}"
+    visit_dir.mkdir(parents=True, exist_ok=True)
 
-def main():
-    args = parse_args()
-
-    # Determine whether orchestrator supplied visit context
-    using_cli_visit = args.visit_id is not None and args.patient_id is not None
-
-    if using_cli_visit:
-        visit_id = args.visit_id
-        patient_id = args.patient_id
-        visit_label = args.visit_label if args.visit_label else datetime.now().date().isoformat()
-        runs_dir = Path(args.runs_dir)
-        visit_dir = runs_dir / f"visit_{visit_id}"
-        visit_dir.mkdir(parents=True, exist_ok=True)
-        print(f"[INFO] Orchestrator mode for visit_id={visit_id}")
-    else:
-        print("[INFO] No orchestrator visit args supplied; entering standalone mode")
-        patient_id = input("Patient ID (or MRN / initials): ").strip() or "Unknown"
+    if visit_label is None:
         visit_label = datetime.now().date().isoformat()
-        visit_id = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-        runs_dir = Path(args.runs_dir)
-        visit_dir = runs_dir / f"visit_{visit_id}"
-        visit_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Create stop file path for signaling when to stop the face subsystem
+
     stop_file = visit_dir / "stop_face.txt"
-    
-    # Read t0 from manifest if available, otherwise use current time
+
     t0, using_orchestrator = get_visit_t0(visit_dir)
 
-    # Update manifest status to "running" for face subsystem if using orchestrator
-    if using_cli_visit:
-        update_manifest_status(visit_dir, "face", "running")
+    update_manifest_status(visit_dir, "face", "running")
 
-    # Create logger
     logger = EmotionVisitLogger(
-        runs_dir = str(runs_dir),
+        runs_dir=str(runs_dir),
         emotion_labels=EMOTION_LABELS,
         metadata_fields=["patient_id", "visit_label"],
         model_version="resnet34_5class_v3"
     )
 
-    # For logging emotion data
     last_log_time = time.time()
     emotion_counts = Counter()
     total_samples = 0
     latency_history = []
 
-    cap = cv2.VideoCapture(args.camera_index, cv2.CAP_DSHOW)
-    print(f"[INFO] Opening camera index {args.camera_index}")   # optional
+    cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+    print(f"[INFO] Opening camera index {camera_index}")
     if not cap.isOpened():
-        print("[Error] Could not open webcam.")
-        return
-    
+        update_manifest_status(visit_dir, "face", "pending")
+        raise RuntimeError("Could not open webcam.")
+
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-    # Track visit start time
     face_start_abs = time.time()
-    
-    with mp_face_detection.FaceDetection(
-        model_selection=0,
-        min_detection_confidence=0.5
-    ) as face_detection:
 
-        while True:
-            frame_start = time.time()
-            ret, frame = cap.read()
-            
-            if not ret:
-                print("[WARN] Failed to grab frame")
-                break
-            
-            h, w, _ = frame.shape
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = face_detection.process(frame_rgb)
+    try:
+        with mp_face_detection.FaceDetection(
+            model_selection=0,
+            min_detection_confidence=0.5
+        ) as face_detection:
 
-            smoothed_label = None
+            while True:
+                frame_start = time.time()
+                ret, frame = cap.read()
 
-            if results.detections:
-                for detection in results.detections:
-                    bbox = detection.location_data.relative_bounding_box
-                    x_min = int(bbox.xmin * w)
-                    y_min = int(bbox.ymin * h)
-                    box_width = int(bbox.width * w)
-                    box_height = int(bbox.height * h)
+                if not ret:
+                    print("[WARN] Failed to grab frame")
+                    break
 
-                    x_min = max(0, x_min)
-                    y_min = max(0, y_min)
-                    x_max = min(w, x_min + box_width)
-                    y_max = min(h, y_min + box_height)
+                h, w, _ = frame.shape
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                results = face_detection.process(frame_rgb)
 
-                    if x_max <= x_min or y_max <= y_min:
-                        continue
+                smoothed_label = None
 
-                    face_roi = frame[y_min:y_max, x_min:x_max]
-                    label, conf = predict_emotion_from_face(face_roi)
-                   
-                    if conf > CONF_THRESHOLD:
-                        label_history.append(label)
+                if results.detections:
+                    for detection in results.detections:
+                        bbox = detection.location_data.relative_bounding_box
+                        x_min = int(bbox.xmin * w)
+                        y_min = int(bbox.ymin * h)
+                        box_width = int(bbox.width * w)
+                        box_height = int(bbox.height * h)
 
-                    now = time.time()
-                    if now - last_log_time >= LOG_INTERVAL_SEC:
-                        smoothed_label = get_smoothed_label(label_history)
-                        if smoothed_label is not None:
-                            emotion_counts[smoothed_label] += 1
-                            total_samples += 1
-                        last_log_time = now
+                        x_min = max(0, x_min)
+                        y_min = max(0, y_min)
+                        x_max = min(w, x_min + box_width)
+                        y_max = min(h, y_min + box_height)
 
-                    cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
-                    text = smoothed_label if smoothed_label is not None else label
-                    cv2.putText(frame, text, (x_min, y_min - 10), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-                    
-                    frame_end = time.time()
-                    latency_history.append((frame_end - frame_start) * 1000)
+                        if x_max <= x_min or y_max <= y_min:
+                            continue
 
-                    if len(latency_history) >= 30:
-                        print(f"Avg latency for last 30 frames: {statistics.mean(latency_history):.2f} ms")
-                        latency_history = []
-            
-            cv2.imshow("Webcam Emotion (Mediapipe + ResNet34)", frame)
+                        face_roi = frame[y_min:y_max, x_min:x_max]
+                        label, conf = predict_emotion_from_face(face_roi)
 
-            # Check for stop signal 
-            if stop_file.exists():
-                print("[INFO] Stop signal detected. Ending face subsystem.")
-                break
+                        if conf > CONF_THRESHOLD:
+                            label_history.append(label)
 
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+                        now = time.time()
+                        if now - last_log_time >= LOG_INTERVAL_SEC:
+                            smoothed_label = get_smoothed_label(label_history)
+                            if smoothed_label is not None:
+                                emotion_counts[smoothed_label] += 1
+                                total_samples += 1
+                            last_log_time = now
 
+                        cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
+                        text = smoothed_label if smoothed_label is not None else label
+                        cv2.putText(
+                            frame,
+                            text,
+                            (x_min, y_min - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.6,
+                            (0, 255, 0),
+                            2,
+                        )
+
+                        frame_end = time.time()
+                        latency_history.append((frame_end - frame_start) * 1000)
+
+                        if len(latency_history) >= 30:
+                            print(f"Avg latency for last 30 frames: {statistics.mean(latency_history):.2f} ms")
+                            latency_history = []
+
+                if frame_callback is not None:
+                    try:
+                        frame_callback(frame)
+                    except Exception as e:
+                        print(f"[WARN] frame_callback failed: {e}")
+
+                if show_window:
+                    cv2.imshow("Webcam Emotion (Mediapipe + ResNet34)", frame)
+                    if cv2.waitKey(1) & 0xFF == ord("q"):
+                        break
+
+                if stop_checker is not None and stop_checker():
+                    print("[INFO] stop_checker requested shutdown.")
+                    break
+
+                if stop_file.exists():
+                    print("[INFO] Stop signal detected. Ending face subsystem.")
+                    break
+
+    finally:
         cap.release()
-        cv2.destroyAllWindows()
-        
+        if show_window:
+            cv2.destroyAllWindows()
+
         if stop_file.exists():
             try:
                 stop_file.unlink()
@@ -306,45 +309,56 @@ def main():
         face_end_abs = time.time()
         face_duration = face_end_abs - face_start_abs
 
-        # Choose which times to log based on mode
         if using_orchestrator:
             log_t_start = face_start_abs - t0
             log_t_end = face_end_abs - t0
-            print(f"[INFO] Logging times relative to orchestrator t0")
         else:
             log_t_start = 0.0
             log_t_end = face_duration
-            print(f"[INFO] Logging times relative to face subsystem start")
-        
-        print("\n[INFO] Face timing:")
-        print(f"  t_start = {log_t_start:.2f}s")
-        print(f"  t_end   = {log_t_end:.2f}s")
-        print(f"  duration= {face_duration:.2f}s")
-        
-        # Log visit summary
-        log_time_start = time.time()
-        
+
         logger.log_visit(
             emotion_counts=emotion_counts,
             total_samples=total_samples,
             visit_id=visit_id,
             visit_duration=face_duration,
-            t_start=log_t_start,  # Pass orchestrator-aware time
-            t_end=log_t_end,      # Pass orchestrator-aware time
+            t_start=log_t_start,
+            t_end=log_t_end,
             meta={
                 "patient_id": patient_id,
                 "visit_label": visit_label,
             }
         )
 
-        #update manifest status to "done" for face subsystem if using orchestrator
-        if using_cli_visit:
-            update_manifest_status(visit_dir, "face", "done")
+        update_manifest_status(visit_dir, "face", "done")
+        print("[INFO] Face subsystem complete!")
 
-        log_time_end = time.time()
-        print(f"\n[INFO] Logger latency: {((log_time_end - log_time_start) * 1000):.2f}ms")
-        print(f"[INFO] Face subsystem complete!")
-        
+# ==========================
+# MAIN
+# ==========================
 
-if __name__ == "__main__":
-    main()
+def main():
+    args = parse_args()
+
+    using_cli_visit = args.visit_id is not None and args.patient_id is not None
+
+    if using_cli_visit:
+        visit_id = args.visit_id
+        patient_id = args.patient_id
+        visit_label = args.visit_label if args.visit_label else datetime.now().date().isoformat()
+        print(f"[INFO] Orchestrator mode for visit_id={visit_id}")
+    else:
+        print("[INFO] No orchestrator visit args supplied; entering standalone mode")
+        patient_id = input("Patient ID (or MRN / initials): ").strip() or "Unknown"
+        visit_label = datetime.now().date().isoformat()
+        visit_id = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+
+    run_face_analysis(
+        visit_id=visit_id,
+        patient_id=patient_id,
+        visit_label=visit_label,
+        runs_dir=args.runs_dir,
+        camera_index=args.camera_index,
+        frame_callback=None,
+        stop_checker=None,
+        show_window=True,   # standalone/manual mode still gets a window
+    )
