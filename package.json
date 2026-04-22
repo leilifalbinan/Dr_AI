@@ -4,6 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "setup": "npm run bootstrap:dev",
+    "bootstrap:dev": "node scripts/bootstrap-dev.js",
     "dev": "concurrently \"vite\" \"npm run dev:transcription\" \"npm run dev:gait\"",
     "dev:transcription": "node scripts/run-transcription.js",
     "dev:gait": "node scripts/run-gait.js",
