@@ -148,13 +148,13 @@ export function buildMultimodalPromptAppendix(visitData) {
   }
 
   const m = visitData.multimodal_jsonl;
-  if (
-    m &&
-    Array.isArray(m.face) &&
-    Array.isArray(m.audio) &&
-    Array.isArray(m.gait)
-  ) {
-    const block = summarizeJsonlForLLM(m.face, m.audio, m.gait);
+  if (m && typeof m === "object") {
+    const face = Array.isArray(m.face) ? m.face : [];
+    const audio = Array.isArray(m.audio) ? m.audio : [];
+    const gait = Array.isArray(m.gait) ? m.gait : [];
+    const hasAnySubsystem = face.length || audio.length || gait.length;
+    if (!hasAnySubsystem) return "";
+    const block = summarizeJsonlForLLM(face, audio, gait);
     return block ? `\n\n${block}` : "";
   }
 
