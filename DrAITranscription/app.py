@@ -754,10 +754,10 @@ def face_live_stream(visit_id):
 
 # ====== Visit Management Endpoints ======
 
-RUNS_DIR = Path("runs")
-
+#RUNS_DIR = Path("runs")
+RUNS_DIR = Path(__file__).resolve().parent.parent / "runs"
 @app.route('/api/visits/<visit_id>/create', methods=['POST'])
-def create_visit(visit_id):
+def create_visit_folder(visit_id):
     data = request.get_json(silent=True) or {}
     visit_dir = RUNS_DIR / f"visit_{visit_id}"
     visit_dir.mkdir(parents=True, exist_ok=True)
@@ -1054,8 +1054,317 @@ def integrate_visit(visit_id):
     return jsonify({"status": "ok", "availability": availability})
 
 # ====== Main ======
+# ═══════════════════════════════════════════════════════════════════════════════
+# STORAGE LAYER  —  patients.json  +  visit_metadata.json
+# Add this block to app.py right above the  if __name__ == '__main__':  line.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+import uuid
+
+# ── Paths ────────────────────────────────────────────────────────────────────
+# REPO_ROOT is already defined above as Path(__file__).resolve().parent.parent
+# RUNS_DIR  change:  was Path("runs")  →  now REPO_ROOT / "runs"
+#
+#   Replace the existing line:
+#       RUNS_DIR = Path("runs")
+#   with:
+#       RUNS_DIR = Path(__file__).resolve().parent.parent / "runs"
+#
+# Everything else in app.py (face, audio, integrate, etc.) works unchanged.
+
+PATIENTS_FILE = REPO_ROOT / "patients.json"
+
+
+# ── JSON file helpers ─────────────────────────────────────────────────────────
+
+def _read_patients():
+    if not PATIENTS_FILE.exists():
+        return []
+    try:
+        return json.loads(PATIENTS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+
+def _write_patients(data):
+    PATIENTS_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _read_visit_metadata(visit_id):
+    path = RUNS_DIR / f"visit_{visit_id}" / "visit_metadata.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _write_visit_metadata(visit_id, data):
+    visit_dir = RUNS_DIR / f"visit_{visit_id}"
+    visit_dir.mkdir(parents=True, exist_ok=True)
+    path = visit_dir / "visit_metadata.json"
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _all_visits():
+    """Return all visit_metadata.json records from every visit folder."""
+    results = []
+    if not RUNS_DIR.exists():
+        return results
+    for visit_dir in RUNS_DIR.iterdir():
+        if not visit_dir.is_dir() or not visit_dir.name.startswith("visit_"):
+            continue
+        meta_path = visit_dir / "visit_metadata.json"
+        if meta_path.exists():
+            try:
+                results.append(json.loads(meta_path.read_text(encoding="utf-8")))
+            except Exception:
+                pass
+    return results
+
+
+# ── Demo seed ─────────────────────────────────────────────────────────────────
+
+def seed_demo_data():
+    """
+    Seed two demo patients and their visits on first startup.
+    Uses the same IDs as the old localStorage seed so existing
+    demo report pages continue to work.
+    """
+    patients = _read_patients()
+    existing_ids = {p["id"] for p in patients}
+
+    demo_patients = [
+        {
+            "id": "patient-demo-1",
+            "first_name": "Michael",
+            "last_name": "Reyes",
+            "date_of_birth": "1962-09-21",
+            "gender": "male",
+            "medical_record_number": "MRN-CC-2048",
+            "primary_diagnosis": "Suspected Parkinson disease",
+            "created_date": "2025-01-15T10:00:00Z",
+            "updated_date": "2025-01-15T10:00:00Z",
+        },
+        {
+            "id": "patient-demo-2",
+            "first_name": "Sarah",
+            "last_name": "Martinez",
+            "date_of_birth": "1986-04-10",
+            "gender": "female",
+            "medical_record_number": "MRN-12345",
+            "primary_diagnosis": "Fibromyalgia syndrome (working diagnosis)",
+            "created_date": "2025-10-01T10:00:00Z",
+            "updated_date": "2025-10-01T10:00:00Z",
+        },
+    ]
+
+    changed = False
+    for dp in demo_patients:
+        if dp["id"] not in existing_ids:
+            patients.append(dp)
+            changed = True
+
+    if changed:
+        _write_patients(patients)
+        print("[Seed] Demo patients written to patients.json")
+
+    # Seed a demo visit for Sarah if not present
+    demo_visit_id = "visit-demo-2"
+    if _read_visit_metadata(demo_visit_id) is None:
+        demo_visit = {
+            "id": demo_visit_id,
+            "patient_id": "patient-demo-2",
+            "visit_number": 1,
+            "visit_date": "2025-10-29",
+            "chief_complaint": "Pain all over entire body",
+            "transcription": (
+                "I have pain all over my body - my joints ache, muscles are sore and stiff. "
+                "Severe headache and nausea. I'm dizzy when standing. "
+                "Extreme fatigue and weakness. Can't sleep at night. "
+                "My stomach hurts and I feel bloated. Everything aches and hurts constantly."
+            ),
+            "physician_notes": "",
+            "bp_systolic": 128,
+            "bp_diastolic": 82,
+            "heart_rate": 88,
+            "respiratory_rate": 18,
+            "temperature": 98.6,
+            "temperature_unit": "fahrenheit",
+            "spo2": 97,
+            "created_date": "2025-10-29T15:00:00Z",
+            "updated_date": "2025-10-29T15:00:00Z",
+        }
+        _write_visit_metadata(demo_visit_id, demo_visit)
+
+        # Also create manifest for demo visit
+        demo_manifest_path = RUNS_DIR / f"visit_{demo_visit_id}" / "manifest.json"
+        if not demo_manifest_path.exists():
+            demo_manifest = {
+                "schema_version": "v0.1",
+                "visit_id": demo_visit_id,
+                "patient_id": "patient-demo-2",
+                "created_utc": "2025-10-29T15:00:00Z",
+                "expected_subsystems": ["audio", "face", "gait"],
+                "status": {"audio": "pending", "face": "pending", "gait": "pending"},
+            }
+            demo_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            demo_manifest_path.write_text(json.dumps(demo_manifest, indent=2), encoding="utf-8")
+
+        print("[Seed] Demo visit written for Sarah Martinez")
+
+
+# ── Patient endpoints ─────────────────────────────────────────────────────────
+
+@app.route('/api/patients', methods=['GET'])
+def list_patients():
+    return jsonify(_read_patients())
+
+
+@app.route('/api/patients', methods=['POST'])
+def create_patient():
+    data = request.get_json(silent=True) or {}
+    patients = _read_patients()
+    now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    new_patient = {
+        **data,
+        "id": data.get("id") or str(uuid.uuid4()),
+        "created_date": data.get("created_date") or now,
+        "updated_date": now,
+    }
+    patients.append(new_patient)
+    _write_patients(patients)
+    print(f"[Patient] Created: {new_patient['id']} — {new_patient.get('first_name')} {new_patient.get('last_name')}")
+    return jsonify(new_patient), 201
+
+
+@app.route('/api/patients/<patient_id>', methods=['GET'])
+def get_patient(patient_id):
+    patients = _read_patients()
+    p = next((x for x in patients if x["id"] == patient_id), None)
+    if not p:
+        return jsonify({"error": "Patient not found"}), 404
+    return jsonify(p)
+
+
+@app.route('/api/patients/<patient_id>', methods=['PATCH'])
+def update_patient(patient_id):
+    data = request.get_json(silent=True) or {}
+    patients = _read_patients()
+    idx = next((i for i, p in enumerate(patients) if p["id"] == patient_id), None)
+    if idx is None:
+        return jsonify({"error": "Patient not found"}), 404
+    patients[idx] = {
+        **patients[idx],
+        **data,
+        "updated_date": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    _write_patients(patients)
+    return jsonify(patients[idx])
+
+
+@app.route('/api/patients/<patient_id>', methods=['DELETE'])
+def delete_patient(patient_id):
+    patients = _read_patients()
+    new_list = [p for p in patients if p["id"] != patient_id]
+    if len(new_list) == len(patients):
+        return jsonify({"error": "Patient not found"}), 404
+    _write_patients(new_list)
+    return jsonify({"success": True})
+
+
+# ── Visit endpoints ───────────────────────────────────────────────────────────
+
+@app.route('/api/visits', methods=['GET'])
+def list_visits():
+    return jsonify(_all_visits())
+
+
+@app.route('/api/visits', methods=['POST'])
+def create_visit():
+    data = request.get_json(silent=True) or {}
+    now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    visit_id = data.get("id") or str(uuid.uuid4())
+
+    visit_metadata = {
+        **data,
+        "id": visit_id,
+        "created_date": data.get("created_date") or now,
+        "updated_date": now,
+    }
+
+    # Write visit_metadata.json
+    _write_visit_metadata(visit_id, visit_metadata)
+
+    # Create manifest.json for the subsystem pipeline
+    visit_dir = RUNS_DIR / f"visit_{visit_id}"
+    manifest_path = visit_dir / "manifest.json"
+    if not manifest_path.exists():
+        manifest = {
+            "schema_version": "v0.1",
+            "visit_id": visit_id,
+            "patient_id": data.get("patient_id", ""),
+            "created_utc": now,
+            "expected_subsystems": ["audio", "face", "gait"],
+            "status": {"audio": "pending", "face": "pending", "gait": "pending"},
+        }
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    print(f"[Visit] Created: visit_{visit_id}")
+    return jsonify(visit_metadata), 201
+
+
+@app.route('/api/visits/<visit_id>', methods=['GET'])
+def get_visit(visit_id):
+    meta = _read_visit_metadata(visit_id)
+    if not meta:
+        return jsonify({"error": "Visit not found"}), 404
+    return jsonify(meta)
+
+
+@app.route('/api/visits/<visit_id>', methods=['PATCH'])
+def update_visit(visit_id):
+    data = request.get_json(silent=True) or {}
+    meta = _read_visit_metadata(visit_id)
+    if not meta:
+        return jsonify({"error": "Visit not found"}), 404
+    meta = {
+        **meta,
+        **data,
+        "updated_date": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    _write_visit_metadata(visit_id, meta)
+    return jsonify(meta)
+
+
+@app.route('/api/visits/<visit_id>', methods=['DELETE'])
+def delete_visit(visit_id):
+    meta = _read_visit_metadata(visit_id)
+    if not meta:
+        return jsonify({"error": "Visit not found"}), 404
+    path = RUNS_DIR / f"visit_{visit_id}" / "visit_metadata.json"
+    path.unlink(missing_ok=True)
+    return jsonify({"success": True})
+
+
+# ── Dev utility ───────────────────────────────────────────────────────────────
+
+@app.route('/api/dev/clear', methods=['POST'])
+def dev_clear():
+    """Dev-only: wipe patients.json and all visit_metadata.json files."""
+    if PATIENTS_FILE.exists():
+        PATIENTS_FILE.unlink()
+    if RUNS_DIR.exists():
+        for visit_dir in RUNS_DIR.iterdir():
+            meta = visit_dir / "visit_metadata.json"
+            if meta.exists():
+                meta.unlink()
+    seed_demo_data()
+    return jsonify({"status": "cleared and reseeded"})
 if __name__ == '__main__':
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    seed_demo_data()
     print("Starting transcription server on http://localhost:5000")
     print(f"Visit artifacts will be saved to: {RUNS_DIR.resolve()}")
     socketio.run(app, host='0.0.0.0', port=5000, debug=True, allow_unsafe_werkzeug=True)
