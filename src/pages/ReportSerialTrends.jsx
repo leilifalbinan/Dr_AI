@@ -18,11 +18,11 @@ import { ArrowLeft, TrendingUp } from "lucide-react";
 import { createPageUrl, cn } from "@/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import PatientNlpTrendCharts from "@/components/PatientNlpTrendCharts";
 import {
   demoSerialVisitSnapshots,
   SERIAL_TREND_DEMO_PATIENT_ID,
 } from "@/data/reportSerialTrendDemoData";
-import PatientNlpTrendCharts from "@/components/PatientNlpTrendCharts";
 
 ChartJS.register(CategoryScale, LinearScale, LineElement, PointElement, Legend, Tooltip, Filler);
 
@@ -41,7 +41,10 @@ const dualAxisLegend = { labels: { font: { size: 10 } } };
 export default function ReportSerialTrends() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const patientId = searchParams.get("patientId") || SERIAL_TREND_DEMO_PATIENT_ID;
+  const reportSource = searchParams.get("source") || "";
+  const isPreviousReportVisual = reportSource === "previous-report-visual";
+  const patientId =
+    searchParams.get("patientId") || (isPreviousReportVisual ? SERIAL_TREND_DEMO_PATIENT_ID : "");
   const visitId = searchParams.get("visitId") || "";
 
   const { data: trendPatient } = useQuery({
@@ -56,14 +59,162 @@ export default function ReportSerialTrends() {
   const { data: storedVisitsForNlp = [] } = useQuery({
     queryKey: ["visits", "nlp-trends", patientId],
     queryFn: () => api.entities.Visit.filter({ patient_id: patientId }, "visit_date"),
-    enabled: !!patientId,
+    enabled: !!patientId && !isPreviousReportVisual,
   });
 
-  const snaps = demoSerialVisitSnapshots;
+  const snaps = useMemo(() => {
+    if (isPreviousReportVisual) {
+      return demoSerialVisitSnapshots;
+    }
+    const faceMetricsFromVisit = (v) => {
+      const faceRows = Array.isArray(v?.multimodal_jsonl?.face) ? v.multimodal_jsonl.face : [];
+      if (!faceRows.length) {
+        return {
+          face_avg_confidence: null,
+          face_neutral_pct: null,
+          face_happy_pct: null,
+          face_sad_pct: null,
+          face_angry_pct: null,
+          face_surprise_pct: null,
+        };
+      }
+      const summary = faceRows.find((r) => r?.type === "summary");
+      const windows = faceRows.filter((r) => r?.type === "window");
+      const confidences = faceRows.map((r) => r?.confidence).filter((x) => x != null).map(Number);
+      const avgConf = confidences.length
+        ? confidences.reduce((a, b) => a + b, 0) / confidences.length
+        : null;
 
-  const patientLabel = trendPatient
-    ? `${trendPatient.first_name} ${trendPatient.last_name}`.trim()
-    : null;
+      const pctFromSummary = summary?.features?.emotion_pct;
+      if (pctFromSummary && typeof pctFromSummary === "object") {
+        return {
+          face_avg_confidence: avgConf,
+          face_neutral_pct: Number(pctFromSummary.neutral ?? null),
+          face_happy_pct: Number(pctFromSummary.happy ?? null),
+          face_sad_pct: Number(pctFromSummary.sad ?? null),
+          face_angry_pct: Number(pctFromSummary.angry ?? null),
+          face_surprise_pct: Number(pctFromSummary.surprise ?? null),
+        };
+      }
+
+      if (!windows.length) {
+        return {
+          face_avg_confidence: avgConf,
+          face_neutral_pct: null,
+          face_happy_pct: null,
+          face_sad_pct: null,
+          face_angry_pct: null,
+          face_surprise_pct: null,
+        };
+      }
+
+      const totals = { neutral: 0, happy: 0, sad: 0, angry: 0, surprise: 0 };
+      let totalCounts = 0;
+      windows.forEach((w) => {
+        const ec = w?.features?.emotion_counts || {};
+        Object.keys(totals).forEach((k) => {
+          const n = Number(ec[k] ?? 0);
+          totals[k] += n;
+          totalCounts += n;
+        });
+      });
+      const pct = (k) => (totalCounts > 0 ? (totals[k] / totalCounts) * 100 : null);
+      return {
+        face_avg_confidence: avgConf,
+        face_neutral_pct: pct("neutral"),
+        face_happy_pct: pct("happy"),
+        face_sad_pct: pct("sad"),
+        face_angry_pct: pct("angry"),
+        face_surprise_pct: pct("surprise"),
+      };
+    };
+    const normVisitNumber = (v, idx) => {
+      if (v?.visit_number != null && v.visit_number !== "") return Number(v.visit_number);
+      return idx + 1;
+    };
+    const sentimentScoreOf = (v) => {
+      if (v?.sentiment_score != null) return Number(v.sentiment_score);
+      if (v?.sentiment_analysis?.sentiment_score != null) return Number(v.sentiment_analysis.sentiment_score);
+      return null;
+    };
+    const diagnosticPctOf = (v) => {
+      if (v?.audio_diagnostic_term_pct != null) return Number(v.audio_diagnostic_term_pct);
+      if (v?.keyword_analysis?.keyword_percentage != null) return Number(v.keyword_analysis.keyword_percentage) / 100;
+      return null;
+    };
+    const keywordHitsOf = (v) => {
+      if (v?.audio_keyword_hits != null) return Number(v.audio_keyword_hits);
+      const dk = v?.keyword_analysis?.diagnostic_keywords;
+      if (dk && typeof dk === "object") {
+        return Object.values(dk).reduce((sum, n) => sum + (Number(n) || 0), 0);
+      }
+      return null;
+    };
+    const wordCountOf = (v) => {
+      if (v?.audio_word_count != null) return Number(v.audio_word_count);
+      if (v?.keyword_analysis?.total_words != null) return Number(v.keyword_analysis.total_words);
+      return null;
+    };
+    const gaitSpeedOf = (v) => {
+      if (v?.gait_avg_speed_mps != null) return Number(v.gait_avg_speed_mps);
+      if (v?.gait_summary?.avg_speed_mps != null) return Number(v.gait_summary.avg_speed_mps);
+      if (v?.gait_summary?.mean_speed_mps != null) return Number(v.gait_summary.mean_speed_mps);
+      return null;
+    };
+    const gaitSymOf = (v) => {
+      if (v?.gait_avg_symmetry != null) return Number(v.gait_avg_symmetry);
+      if (v?.gait_summary?.avg_symmetry != null) return Number(v.gait_summary.avg_symmetry);
+      if (v?.gait_summary?.knee_symmetry_index_percent != null) {
+        const idxPct = Number(v.gait_summary.knee_symmetry_index_percent);
+        return Number.isFinite(idxPct) ? Math.max(0, Math.min(1, 1 - idxPct / 100)) : null;
+      }
+      return null;
+    };
+    const gaitStabOf = (v) => {
+      if (v?.gait_avg_stability != null) return Number(v.gait_avg_stability);
+      if (v?.gait_summary?.avg_stability != null) return Number(v.gait_summary.avg_stability);
+      return null;
+    };
+    const gaitEventsOf = (v) => {
+      if (v?.gait_event_count != null) return Number(v.gait_event_count);
+      return null;
+    };
+
+    return storedVisitsForNlp.map((v, idx) => ({
+      ...faceMetricsFromVisit(v),
+      visit_id: v.id,
+      visit_number: normVisitNumber(v, idx),
+      visit_date: v.visit_date,
+      chief_complaint: v.chief_complaint,
+      bp_systolic: v.bp_systolic != null ? Number(v.bp_systolic) : null,
+      bp_diastolic: v.bp_diastolic != null ? Number(v.bp_diastolic) : null,
+      heart_rate: v.heart_rate != null ? Number(v.heart_rate) : null,
+      respiratory_rate: v.respiratory_rate != null ? Number(v.respiratory_rate) : null,
+      temperature: v.temperature != null ? Number(v.temperature) : null,
+      temperature_unit: v.temperature_unit || "fahrenheit",
+      spo2: v.spo2 != null ? Number(v.spo2) : null,
+      height: v.height != null ? Number(v.height) : null,
+      weight: v.weight != null ? Number(v.weight) : null,
+      bmi: v.bmi != null ? Number(v.bmi) : null,
+      sentiment_score: sentimentScoreOf(v),
+      audio_polarity: v?.sentiment_analysis?.sentiment_score != null ? Number(v.sentiment_analysis.sentiment_score) : sentimentScoreOf(v),
+      audio_diagnostic_term_pct: diagnosticPctOf(v),
+      audio_keyword_hits: keywordHitsOf(v),
+      audio_word_count: wordCountOf(v),
+      gait_avg_speed_mps: gaitSpeedOf(v),
+      gait_avg_symmetry: gaitSymOf(v),
+      gait_avg_stability: gaitStabOf(v),
+      gait_event_count: gaitEventsOf(v),
+      ai_assessment: v.ai_assessment || null,
+    }));
+  }, [storedVisitsForNlp, isPreviousReportVisual]);
+
+  const patientLabel = useMemo(() => {
+    if (isPreviousReportVisual && patientId === SERIAL_TREND_DEMO_PATIENT_ID) {
+      return "Michael Reyes";
+    }
+    return trendPatient ? `${trendPatient.first_name} ${trendPatient.last_name}`.trim() : null;
+  }, [isPreviousReportVisual, patientId, trendPatient]);
 
   const labels = useMemo(
     () => snaps.map((s) => format(new Date(s.visit_date), "MMM d, yy")),
@@ -326,7 +477,7 @@ export default function ReportSerialTrends() {
         },
         {
           label: "Symmetry (%)",
-          data: snaps.map((s) => (s.gait_avg_symmetry ?? 0) * 100),
+          data: snaps.map((s) => (s.gait_avg_symmetry != null ? s.gait_avg_symmetry * 100 : null)),
           borderColor: "#15803d",
           backgroundColor: "rgba(21,128,61,0.08)",
           yAxisID: "yPct",
@@ -335,7 +486,7 @@ export default function ReportSerialTrends() {
         },
         {
           label: "Stability (%)",
-          data: snaps.map((s) => (s.gait_avg_stability ?? 0) * 100),
+          data: snaps.map((s) => (s.gait_avg_stability != null ? s.gait_avg_stability * 100 : null)),
           borderColor: "#65a30d",
           backgroundColor: "rgba(101,163,13,0.08)",
           yAxisID: "yPct",
@@ -414,6 +565,24 @@ export default function ReportSerialTrends() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-teal-50 via-green-50 to-emerald-50 p-8">
       <div className="max-w-7xl mx-auto">
+        {!patientId ? (
+          <Card className="border-teal-200 bg-white/80 backdrop-blur">
+            <CardContent className="py-8 text-sm text-teal-700">
+              No patient selected for serial trend analysis.
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {patientId && snaps.length === 0 ? (
+          <Card className="border-teal-200 bg-white/80 backdrop-blur mb-6">
+            <CardContent className="py-8 text-sm text-teal-700">
+              No visits found for this patient yet.
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {patientId && snaps.length > 0 && (
+          <>
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
           <div className="flex items-center gap-4">
             <Button
@@ -437,7 +606,7 @@ export default function ReportSerialTrends() {
                       <span className="text-teal-600"> · </span>
                     </>
                   ) : null}
-                  Multimodal demo series · <span className="font-mono">{patientId}</span>
+                  Multimodal serial trends · <span className="font-mono">{patientId}</span>
                 </p>
               </div>
             </div>
@@ -477,15 +646,15 @@ export default function ReportSerialTrends() {
                       <td className="py-2 pr-2 font-mono">{s.visit_number}</td>
                       <td className="py-2 pr-2">{format(new Date(s.visit_date), "MMM d, yyyy")}</td>
                       <td className="py-2 pr-2 font-mono">
-                        {s.bp_systolic}/{s.bp_diastolic}
+                        {s.bp_systolic != null && s.bp_diastolic != null ? `${s.bp_systolic}/${s.bp_diastolic}` : "—"}
                       </td>
-                      <td className="py-2 pr-2 font-mono">{s.heart_rate}</td>
-                      <td className="py-2 pr-2 font-mono">{s.respiratory_rate}</td>
-                      <td className="py-2 pr-2 font-mono">{s.temperature?.toFixed(1)}°</td>
-                      <td className="py-2 pr-2 font-mono">{s.spo2}%</td>
-                      <td className="py-2 pr-2 font-mono">{s.bmi?.toFixed(1)}</td>
-                      <td className="py-2 pr-2 font-mono">{s.sentiment_score?.toFixed(2)}</td>
-                      <td className="py-2 font-mono">{s.gait_avg_speed_mps?.toFixed(2)}</td>
+                      <td className="py-2 pr-2 font-mono">{s.heart_rate != null ? s.heart_rate : "—"}</td>
+                      <td className="py-2 pr-2 font-mono">{s.respiratory_rate != null ? s.respiratory_rate : "—"}</td>
+                      <td className="py-2 pr-2 font-mono">{s.temperature != null ? `${s.temperature.toFixed(1)}°` : "—"}</td>
+                      <td className="py-2 pr-2 font-mono">{s.spo2 != null ? `${s.spo2}%` : "—"}</td>
+                      <td className="py-2 pr-2 font-mono">{s.bmi != null ? s.bmi.toFixed(1) : "—"}</td>
+                      <td className="py-2 pr-2 font-mono">{s.sentiment_score != null ? s.sentiment_score.toFixed(2) : "—"}</td>
+                      <td className="py-2 font-mono">{s.gait_avg_speed_mps != null ? s.gait_avg_speed_mps.toFixed(2) : "—"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -562,78 +731,90 @@ export default function ReportSerialTrends() {
               <div className="rounded-lg border border-teal-200 bg-teal-50/70 p-3">
                 <p className="text-[0.65rem] uppercase tracking-wider text-teal-600">BP</p>
                 <p className="text-lg font-semibold text-teal-900 font-mono">
-                  {latest.bp_systolic}/{latest.bp_diastolic}
+                  {latest.bp_systolic != null && latest.bp_diastolic != null ? `${latest.bp_systolic}/${latest.bp_diastolic}` : "—"}
                 </p>
                 {previous && (
                   <p className="text-xs text-teal-700">
-                    Δ sys {latest.bp_systolic - previous.bp_systolic >= 0 ? "+" : ""}
-                    {latest.bp_systolic - previous.bp_systolic}
+                    Δ sys {latest.bp_systolic != null && previous.bp_systolic != null
+                      ? `${latest.bp_systolic - previous.bp_systolic >= 0 ? "+" : ""}${latest.bp_systolic - previous.bp_systolic}`
+                      : "—"}
                   </p>
                 )}
               </div>
               <div className="rounded-lg border border-teal-200 bg-teal-50/70 p-3">
                 <p className="text-[0.65rem] uppercase tracking-wider text-teal-600">Heart rate</p>
-                <p className="text-lg font-semibold text-teal-900 font-mono">{latest.heart_rate} bpm</p>
+                <p className="text-lg font-semibold text-teal-900 font-mono">{latest.heart_rate != null ? `${latest.heart_rate} bpm` : "—"}</p>
                 {previous && (
                   <p className="text-xs text-teal-700">
-                    Δ {latest.heart_rate - previous.heart_rate >= 0 ? "+" : ""}
-                    {latest.heart_rate - previous.heart_rate}
+                    Δ {latest.heart_rate != null && previous.heart_rate != null
+                      ? `${latest.heart_rate - previous.heart_rate >= 0 ? "+" : ""}${latest.heart_rate - previous.heart_rate}`
+                      : "—"}
                   </p>
                 )}
               </div>
               <div className="rounded-lg border border-teal-200 bg-teal-50/70 p-3">
                 <p className="text-[0.65rem] uppercase tracking-wider text-teal-600">RR</p>
-                <p className="text-lg font-semibold text-teal-900 font-mono">{latest.respiratory_rate}/min</p>
+                <p className="text-lg font-semibold text-teal-900 font-mono">{latest.respiratory_rate != null ? `${latest.respiratory_rate}/min` : "—"}</p>
                 {previous && (
                   <p className="text-xs text-teal-700">
-                    Δ {latest.respiratory_rate - previous.respiratory_rate >= 0 ? "+" : ""}
-                    {latest.respiratory_rate - previous.respiratory_rate}
+                    Δ {latest.respiratory_rate != null && previous.respiratory_rate != null
+                      ? `${latest.respiratory_rate - previous.respiratory_rate >= 0 ? "+" : ""}${latest.respiratory_rate - previous.respiratory_rate}`
+                      : "—"}
                   </p>
                 )}
               </div>
               <div className="rounded-lg border border-teal-200 bg-teal-50/70 p-3">
                 <p className="text-[0.65rem] uppercase tracking-wider text-teal-600">SpO₂</p>
-                <p className="text-lg font-semibold text-teal-900 font-mono">{latest.spo2}%</p>
+                <p className="text-lg font-semibold text-teal-900 font-mono">{latest.spo2 != null ? `${latest.spo2}%` : "—"}</p>
                 {previous && (
                   <p className="text-xs text-teal-700">
-                    Δ {latest.spo2 - previous.spo2 >= 0 ? "+" : ""}
-                    {latest.spo2 - previous.spo2}%
+                    Δ {latest.spo2 != null && previous.spo2 != null
+                      ? `${latest.spo2 - previous.spo2 >= 0 ? "+" : ""}${latest.spo2 - previous.spo2}%`
+                      : "—"}
                   </p>
                 )}
               </div>
               <div className="rounded-lg border border-teal-200 bg-teal-50/70 p-3">
                 <p className="text-[0.65rem] uppercase tracking-wider text-teal-600">Temp</p>
-                <p className="text-lg font-semibold text-teal-900 font-mono">{latest.temperature?.toFixed(1)} °F</p>
+                <p className="text-lg font-semibold text-teal-900 font-mono">{latest.temperature != null ? `${latest.temperature.toFixed(1)} °F` : "—"}</p>
                 {previous && (
                   <p className="text-xs text-teal-700">
-                    Δ {(latest.temperature - previous.temperature).toFixed(1)} °F
+                    Δ {latest.temperature != null && previous.temperature != null
+                      ? `${(latest.temperature - previous.temperature).toFixed(1)} °F`
+                      : "—"}
                   </p>
                 )}
               </div>
               <div className="rounded-lg border border-teal-200 bg-teal-50/70 p-3">
                 <p className="text-[0.65rem] uppercase tracking-wider text-teal-600">BMI</p>
-                <p className="text-lg font-semibold text-teal-900 font-mono">{latest.bmi?.toFixed(1)}</p>
+                <p className="text-lg font-semibold text-teal-900 font-mono">{latest.bmi != null ? latest.bmi.toFixed(1) : "—"}</p>
                 {previous && (
                   <p className="text-xs text-teal-700">
-                    Δ {(latest.bmi - previous.bmi).toFixed(1)}
+                    Δ {latest.bmi != null && previous.bmi != null
+                      ? `${(latest.bmi - previous.bmi).toFixed(1)}`
+                      : "—"}
                   </p>
                 )}
               </div>
               <div className="rounded-lg border border-teal-200 bg-teal-50/70 p-3">
                 <p className="text-[0.65rem] uppercase tracking-wider text-teal-600">Audio sentiment</p>
-                <p className="text-lg font-semibold text-teal-900 font-mono">{latest.sentiment_score?.toFixed(2)}</p>
+                <p className="text-lg font-semibold text-teal-900 font-mono">{latest.sentiment_score != null ? latest.sentiment_score.toFixed(2) : "—"}</p>
                 {previous && (
                   <p className="text-xs text-teal-700">
-                    Δ {(latest.sentiment_score - previous.sentiment_score).toFixed(2)}
+                    Δ {latest.sentiment_score != null && previous.sentiment_score != null
+                      ? `${(latest.sentiment_score - previous.sentiment_score).toFixed(2)}`
+                      : "—"}
                   </p>
                 )}
               </div>
               <div className="rounded-lg border border-teal-200 bg-teal-50/70 p-3">
                 <p className="text-[0.65rem] uppercase tracking-wider text-teal-600">Gait speed</p>
-                <p className="text-lg font-semibold text-teal-900 font-mono">{latest.gait_avg_speed_mps?.toFixed(2)} m/s</p>
+                <p className="text-lg font-semibold text-teal-900 font-mono">{latest.gait_avg_speed_mps != null ? `${latest.gait_avg_speed_mps.toFixed(2)} m/s` : "—"}</p>
                 {previous && (
                   <p className="text-xs text-teal-700">
-                    Δ {(latest.gait_avg_speed_mps - previous.gait_avg_speed_mps).toFixed(2)}
+                    Δ {latest.gait_avg_speed_mps != null && previous.gait_avg_speed_mps != null
+                      ? `${(latest.gait_avg_speed_mps - previous.gait_avg_speed_mps).toFixed(2)}`
+                      : "—"}
                   </p>
                 )}
               </div>
@@ -746,8 +927,10 @@ export default function ReportSerialTrends() {
         </Card>
 
         <p className="text-xs text-teal-600">
-          Sample data only — extend with stored visits and JSONL rollups when backend wiring is ready.
+          Live patient-specific trend view from stored visits.
         </p>
+          </>
+        )}
       </div>
     </div>
   );

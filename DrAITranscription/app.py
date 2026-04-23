@@ -1148,9 +1148,42 @@ def _read_ndjson(path: Path):
     return rows
 
 
+def _read_json_file(path: Path):
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
 def _safe_mean(values):
     vals = [float(v) for v in values if v is not None]
     return (sum(vals) / len(vals)) if vals else None
+
+
+def _clamp01(value):
+    return max(0.0, min(1.0, float(value)))
+
+
+def _score_from_range(value, good_max, poor_min):
+    """
+    Convert a raw metric where lower is better into 0..1.
+    - <= good_max: 1.0 (good)
+    - >= poor_min: 0.0 (poor)
+    - linear interpolation in between
+    """
+    if value is None:
+        return None
+    v = float(value)
+    if v <= good_max:
+        return 1.0
+    if v >= poor_min:
+        return 0.0
+    span = float(poor_min) - float(good_max)
+    if span <= 0:
+        return None
+    return _clamp01(1.0 - ((v - float(good_max)) / span))
 
 
 def _build_demo_report_package():
@@ -1160,6 +1193,7 @@ def _build_demo_report_package():
 
     audio_rows = _read_ndjson(demo_dir / "audio.jsonl")
     gait_rows = _read_ndjson(demo_dir / "gait_visit_20s.jsonl")
+    patient_details = _read_json_file(demo_dir / "patientdetails.json") or {}
 
     face_file = None
     for candidate in sorted(demo_dir.glob("face*.jsonl")):
@@ -1177,6 +1211,13 @@ def _build_demo_report_package():
     gait_frames = [r for r in gait_rows if r.get("event") == "gait_frame"]
     gait_summary = next((r for r in gait_rows if r.get("event") == "gait_summary"), None)
 
+    speed_norm_vals = [fr.get("speed_norm") for fr in gait_frames if fr.get("speed_norm") is not None]
+    mean_speed_norm = _safe_mean(speed_norm_vals)
+    mean_speed_mps = gait_summary.get("mean_speed_mps") if gait_summary else None
+    speed_scale = None
+    if mean_speed_norm not in (None, 0) and mean_speed_mps is not None:
+        speed_scale = float(mean_speed_mps) / float(mean_speed_norm)
+
     gait = []
     for fr in gait_frames:
         gait.append({
@@ -1188,8 +1229,14 @@ def _build_demo_report_package():
             "t_start": fr.get("t_s"),
             "t_end": fr.get("t_s"),
             "features": {
-                # speed_norm is preserved as source field; report treats this as relative speed.
-                "speed_mps": fr.get("speed_norm"),
+                # Calibrate normalized frame speed to m/s when summary mean exists.
+                # Falls back to raw normalized value when calibration is unavailable.
+                "speed_mps": (
+                    (float(fr.get("speed_norm")) * speed_scale)
+                    if (fr.get("speed_norm") is not None and speed_scale is not None)
+                    else fr.get("speed_norm")
+                ),
+                "speed_norm": fr.get("speed_norm"),
                 "symmetry": None,
                 # Stability score approximation: 1 - |sway|/peak, clipped to [0,1]
                 "stability": None,
@@ -1211,15 +1258,35 @@ def _build_demo_report_package():
             avg_symmetry_ratio = max(0.0, min(1.0, 1.0 - (float(symmetry_idx) / 100.0)))
 
         sway_vals = [abs(fr.get("trunk_sway")) for fr in gait_frames if fr.get("trunk_sway") is not None]
-        sway_peak = max(sway_vals) if sway_vals else None
-        avg_stability = None
-        if sway_peak and sway_peak > 0:
-            stabs = [max(0.0, min(1.0, 1.0 - (v / sway_peak))) for v in sway_vals]
-            avg_stability = _safe_mean(stabs)
-            for row in gait:
-                sway = row["features"].get("trunk_sway")
-                if sway is not None:
-                    row["features"]["stability"] = max(0.0, min(1.0, 1.0 - (abs(float(sway)) / sway_peak)))
+
+        # Clinical-style stability scoring based on absolute trunk sway magnitudes.
+        # Lower sway => higher stability. Thresholds are conservative and intended
+        # for normalized/relative sway values in this pipeline.
+        frame_stabs = [
+            _score_from_range(v, good_max=0.015, poor_min=0.060)
+            for v in sway_vals
+            if v is not None
+        ]
+        frame_stabs = [s for s in frame_stabs if s is not None]
+
+        rms_stability = _score_from_range(gait_summary.get("trunk_sway_rms"), good_max=0.020, poor_min=0.060)
+        p2p_stability = _score_from_range(gait_summary.get("trunk_sway_peak_to_peak"), good_max=0.060, poor_min=0.180)
+        avg_stability = _safe_mean(frame_stabs)
+
+        # Prefer summary-level clinical indicators when present; blend with
+        # frame-derived score for smoother behavior.
+        summary_candidates = [s for s in [rms_stability, p2p_stability] if s is not None]
+        if summary_candidates:
+            summary_score = _safe_mean(summary_candidates)
+            if avg_stability is None:
+                avg_stability = summary_score
+            else:
+                avg_stability = (0.7 * summary_score) + (0.3 * avg_stability)
+
+        for row in gait:
+            sway = row["features"].get("trunk_sway")
+            if sway is not None:
+                row["features"]["stability"] = _score_from_range(abs(float(sway)), good_max=0.015, poor_min=0.060)
 
         for row in gait:
             row["features"]["symmetry"] = avg_symmetry_ratio
@@ -1251,7 +1318,11 @@ def _build_demo_report_package():
             "schema_version": "v0.1",
             "notes": (
                 f"Symmetry ratio derived from symmetry_index ({gait_summary.get('symmetry_index')}%). "
-                "Speed windows use source speed_norm (relative scale)."
+                + (
+                    "Frame speed converted from speed_norm to m/s using summary calibration."
+                    if speed_scale is not None
+                    else "Frame speed uses source speed_norm (relative scale); no m/s calibration available."
+                )
             ),
         })
 
@@ -1261,6 +1332,7 @@ def _build_demo_report_package():
         "face": face,
         "audio": audio,
         "gait": gait,
+        "patient_details": patient_details,
         "wip": [
             "Face file currently contains summary-only rows (no per-window emotion timeline).",
             "Gait window speed uses speed_norm from source and may not be physical m/s.",
@@ -1277,6 +1349,7 @@ def _build_demo_report_derived():
     audio = pkg.get("audio", [])
     gait = pkg.get("gait", [])
     face = pkg.get("face", [])
+    patient_details = pkg.get("patient_details", {}) or {}
 
     audio_windows = [r for r in audio if r.get("type") == "window"]
     audio_summary = next((r for r in audio if r.get("type") == "summary"), None)
@@ -1372,17 +1445,47 @@ def _build_demo_report_derived():
         if top_emo:
             physician_notes_parts.append("Face summary: " + ", ".join([f"{k} {v}%" for k, v in top_emo]))
     physician_notes = " ".join(physician_notes_parts).strip()
+    doctor_notes = (
+        patient_details.get("doctor_notes")
+        or patient_details.get("physician_notes")
+        or physician_notes
+    )
+
+    details_patient_id = patient_details.get("patient_id")
+    details_visit_id = patient_details.get("visit_id")
+    details_patient_name = patient_details.get("patient_name")
+
+    details_vitals = {
+        "bp_systolic": patient_details.get("bp_systolic"),
+        "bp_diastolic": patient_details.get("bp_diastolic"),
+        "heart_rate": patient_details.get("heart_rate"),
+        "respiratory_rate": patient_details.get("respiratory_rate"),
+        "temperature": patient_details.get("temperature"),
+        "temperature_unit": patient_details.get("temperature_unit"),
+        "spo2": patient_details.get("spo2"),
+        "height": patient_details.get("height"),
+        "weight": patient_details.get("weight"),
+        "bmi": patient_details.get("bmi"),
+    }
 
     return {
         "ok": True,
-        "visit_id": "demo-report-visit",
-        "patient_id": "demo-report-patient",
-        "chief_complaint": "DemoReport multimodal review",
+        "visit_id": details_visit_id or "demo-report-visit",
+        "patient_id": details_patient_id or "demo-report-patient",
+        "patient_name": details_patient_name,
+        "chief_complaint": patient_details.get("chief_complaint") or "DemoReport multimodal review",
         "transcription": transcription,
         "keyword_analysis": keyword_analysis,
         "sentiment_analysis": sentiment_analysis,
         "semantic_analysis": semantic_analysis,
-        "physician_notes": physician_notes,
+        "physician_notes": doctor_notes,
+        "doctor_notes": doctor_notes,
+        **details_vitals,
+        "patient_details": {
+            **patient_details,
+            "doctor_notes": doctor_notes,
+            **details_vitals,
+        },
         "multimodal_jsonl": {"face": face, "audio": audio, "gait": gait},
         "gait_summary": gait_summary.get("features", {}) if gait_summary else None,
     }

@@ -24,10 +24,10 @@ import { Badge } from "@/components/ui/badge";
 import { generateCombinedReportPDF } from "@/utils/combinedReportPdf";
 import { demoSerialVisitSnapshots } from "@/data/reportSerialTrendDemoData";
 import {
-  DEMO_REPORT_PATIENT_ID,
   DEMO_REPORT_VISIT_ID,
   getReportDemoPackage,
 } from "@/data/reportSummaryDemoData";
+import { buildMichaelSerialStorageVisits } from "@/data/michaelSerialVisitStorageSeeds";
 import VisitTranscriptionNlpPanel from "@/components/VisitTranscriptionNlpPanel";
 
 ChartJS.register(
@@ -248,9 +248,11 @@ export default function ReportSummary() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const visitIdParam = searchParams.get("visitId") || DEMO_REPORT_VISIT_ID;
+  const reportSource = searchParams.get("source") || "";
+  const isPreviousReportVisual = reportSource === "previous-report-visual";
+  const hideImportStatusCard = reportSource === "previous-report-visual";
   const demoReportMode =
     String(visitIdParam).toLowerCase() === "demoreport" ||
-    visitIdParam === DEMO_REPORT_VISIT_ID ||
     visitIdParam === "demo-report-visit";
 
   const { data: loadedVisit } = useQuery({
@@ -259,10 +261,15 @@ export default function ReportSummary() {
       const rows = await api.entities.Visit.filter({ id: visitIdParam });
       return rows[0];
     },
-    enabled: !!visitIdParam,
+    enabled: !!visitIdParam && !isPreviousReportVisual,
   });
 
   const reportPkg = useMemo(() => getReportDemoPackage(visitIdParam), [visitIdParam]);
+  const michaelSerialSeededVisits = useMemo(() => buildMichaelSerialStorageVisits(), []);
+  const seededVisit = useMemo(
+    () => michaelSerialSeededVisits.find((v) => v.id === visitIdParam),
+    [michaelSerialSeededVisits, visitIdParam]
+  );
   const { data: demoReportData } = useQuery({
     queryKey: ["demo-report-package"],
     queryFn: async () => {
@@ -270,7 +277,7 @@ export default function ReportSummary() {
       if (!res.ok) throw new Error("demo-report-package unavailable");
       return res.json();
     },
-    enabled: demoReportMode,
+    enabled: demoReportMode && !isPreviousReportVisual,
     retry: false,
   });
   const { data: demoReportDerived } = useQuery({
@@ -280,13 +287,19 @@ export default function ReportSummary() {
       if (!res.ok) throw new Error("demo-report-derived unavailable");
       return res.json();
     },
-    enabled: demoReportMode,
+    enabled: demoReportMode && !isPreviousReportVisual,
     retry: false,
   });
 
-  const face = demoReportData?.ok ? demoReportData.face || [] : reportPkg.face;
-  const audio = demoReportData?.ok ? demoReportData.audio || [] : reportPkg.audio;
-  const gait = demoReportData?.ok ? demoReportData.gait || [] : reportPkg.gait;
+  const face = isPreviousReportVisual
+    ? reportPkg.face
+    : (demoReportData?.ok ? demoReportData.face || [] : (loadedVisit?.multimodal_jsonl?.face || []));
+  const audio = isPreviousReportVisual
+    ? reportPkg.audio
+    : (demoReportData?.ok ? demoReportData.audio || [] : (loadedVisit?.multimodal_jsonl?.audio || []));
+  const gait = isPreviousReportVisual
+    ? reportPkg.gait
+    : (demoReportData?.ok ? demoReportData.gait || [] : (loadedVisit?.multimodal_jsonl?.gait || []));
   const demoReportWip = demoReportData?.ok ? demoReportData.wip || [] : [];
   const [showFaceRaw, setShowFaceRaw] = useState(false);
   const [showAudioRaw, setShowAudioRaw] = useState(false);
@@ -294,7 +307,9 @@ export default function ReportSummary() {
   const [reportTab, setReportTab] = useState("multimodal");
   const [keywordView, setKeywordView] = useState("diagnostic");
 
-  const patientIdForTrends = loadedVisit?.patient_id ?? DEMO_REPORT_PATIENT_ID;
+  const patientIdForTrends = isPreviousReportVisual
+    ? (loadedVisit?.patient_id ?? seededVisit?.patient_id ?? reportPkg.face?.[0]?.patient_id ?? "")
+    : (loadedVisit?.patient_id ?? "");
 
   const { data: patient } = useQuery({
     queryKey: ["patient", patientIdForTrends],
@@ -302,21 +317,33 @@ export default function ReportSummary() {
       const rows = await api.entities.Patient.filter({ id: patientIdForTrends });
       return rows[0];
     },
-    enabled: !!patientIdForTrends,
+    enabled: !!patientIdForTrends && !isPreviousReportVisual,
   });
 
   const patientDisplayName = useMemo(() => {
-    if (!patient) return "Unknown Patient";
+    if (isPreviousReportVisual) {
+      if (patientIdForTrends === "patient-demo-1") return "Michael Reyes";
+      if (patientIdForTrends === "patient-demo-2") return "Sarah Martinez";
+    }
+    const visitPatientName =
+      loadedVisit?.patient_name ||
+      demoReportDerived?.patient_name ||
+      demoReportDerived?.patient_details?.patient_name;
+    if (!patient) return visitPatientName || "Unknown Patient";
     const fullName = [patient.first_name, patient.last_name].filter(Boolean).join(" ").trim();
-    return fullName || "Unknown Patient";
-  }, [patient]);
+    return fullName || visitPatientName || "Unknown Patient";
+  }, [patient, patientIdForTrends, isPreviousReportVisual, loadedVisit, demoReportDerived]);
 
   const aiAssessment = useMemo(() => {
+    if (isPreviousReportVisual) {
+      if (seededVisit?.ai_assessment && typeof seededVisit.ai_assessment === "object") return seededVisit.ai_assessment;
+      return reportPkg.aiAssessment;
+    }
     const a = loadedVisit?.ai_assessment;
     if (a && typeof a === "object") return a;
     if (demoReportDerived?.ok && demoReportDerived.ai_assessment) return demoReportDerived.ai_assessment;
-    return reportPkg.aiAssessment;
-  }, [loadedVisit, reportPkg.aiAssessment, demoReportDerived]);
+    return null;
+  }, [isPreviousReportVisual, loadedVisit, seededVisit, reportPkg.aiAssessment, demoReportDerived]);
   const aiAssessmentIsFallback = useMemo(() => {
     if (!demoReportMode) return false;
     if (loadedVisit?.ai_assessment && typeof loadedVisit.ai_assessment === "object") return false;
@@ -326,6 +353,12 @@ export default function ReportSummary() {
 
   const { nlpVisit, nlpUsingDemoFallback } = useMemo(() => {
     const demo = reportPkg.transcriptionNlp;
+    if (isPreviousReportVisual) {
+      if (seededVisit) {
+        return { nlpVisit: seededVisit, nlpUsingDemoFallback: false };
+      }
+      return { nlpVisit: demo, nlpUsingDemoFallback: false };
+    }
     if (demoReportMode && demoReportDerived?.ok) {
       const derivedVisit = {
         transcription: demoReportDerived.transcription,
@@ -352,27 +385,46 @@ export default function ReportSummary() {
       }
       return { nlpVisit: derivedVisit, nlpUsingDemoFallback: false };
     }
-    if (!loadedVisit) {
-      return { nlpVisit: demo, nlpUsingDemoFallback: true };
-    }
-    const hasNlpSaved = Boolean(
-      loadedVisit.transcription ||
-        loadedVisit.keyword_analysis ||
-        loadedVisit.sentiment_analysis ||
-        loadedVisit.semantic_analysis ||
-        loadedVisit.physician_notes ||
-        loadedVisit.ai_comparison
-    );
-    if (!hasNlpSaved) {
-      return {
-        nlpVisit: { ...loadedVisit, ...demo },
-        nlpUsingDemoFallback: true,
-      };
-    }
-    return { nlpVisit: loadedVisit, nlpUsingDemoFallback: false };
-  }, [loadedVisit, reportPkg.transcriptionNlp, demoReportMode, demoReportDerived]);
+    return { nlpVisit: loadedVisit || {}, nlpUsingDemoFallback: false };
+  }, [isPreviousReportVisual, loadedVisit, seededVisit, reportPkg.transcriptionNlp, demoReportMode, demoReportDerived]);
 
   const vitalsDisplay = useMemo(() => {
+    if (isPreviousReportVisual) {
+      const v = loadedVisit;
+      if (v && (v.bp_systolic || v.heart_rate)) {
+        return {
+          visit_date: v.visit_date,
+          chief_complaint: v.chief_complaint,
+          bp_systolic: v.bp_systolic,
+          bp_diastolic: v.bp_diastolic,
+          heart_rate: v.heart_rate,
+          respiratory_rate: v.respiratory_rate,
+          temperature: v.temperature,
+          temperature_unit: v.temperature_unit || "fahrenheit",
+          spo2: v.spo2,
+          height: v.height,
+          weight: v.weight,
+          bmi: v.bmi,
+        };
+      }
+      if (seededVisit && (seededVisit.bp_systolic || seededVisit.heart_rate)) {
+        return {
+          visit_date: seededVisit.visit_date,
+          chief_complaint: seededVisit.chief_complaint,
+          bp_systolic: seededVisit.bp_systolic,
+          bp_diastolic: seededVisit.bp_diastolic,
+          heart_rate: seededVisit.heart_rate,
+          respiratory_rate: seededVisit.respiratory_rate,
+          temperature: seededVisit.temperature,
+          temperature_unit: seededVisit.temperature_unit || "fahrenheit",
+          spo2: seededVisit.spo2,
+          height: seededVisit.height,
+          weight: seededVisit.weight,
+          bmi: seededVisit.bmi,
+        };
+      }
+      return { ...reportPkg.visitSnapshot };
+    }
     const v = loadedVisit;
     if (v && (v.bp_systolic || v.heart_rate)) {
       return {
@@ -390,8 +442,8 @@ export default function ReportSummary() {
         bmi: v.bmi,
       };
     }
-    return { ...reportPkg.visitSnapshot };
-  }, [loadedVisit, reportPkg.visitSnapshot]);
+    return {};
+  }, [isPreviousReportVisual, loadedVisit, seededVisit, reportPkg.visitSnapshot]);
   const vitalsAreFallback = useMemo(() => {
     if (!demoReportMode) return false;
     const v = loadedVisit;
@@ -400,13 +452,21 @@ export default function ReportSummary() {
 
   const visitMeta = useMemo(() => {
     const allRecs = [...face, ...audio, ...gait];
-    if (!allRecs.length) return null;
+    if (!allRecs.length) {
+      if (loadedVisit) {
+        return {
+          visitId: visitIdParam,
+          patientId: loadedVisit.patient_id ?? "—",
+        };
+      }
+      return null;
+    }
     const first = allRecs[0];
     return {
       visitId: visitIdParam,
-      patientId: loadedVisit?.patient_id ?? first.patient_id ?? "—",
+      patientId: loadedVisit?.patient_id ?? (isPreviousReportVisual ? seededVisit?.patient_id : null) ?? first.patient_id ?? "—",
     };
-  }, [face, audio, gait, visitIdParam, loadedVisit]);
+  }, [face, audio, gait, visitIdParam, loadedVisit, seededVisit, isPreviousReportVisual]);
 
   const { cf, ca, cg, co } = useMemo(() => {
     const f = avgConf(face);
@@ -829,7 +889,9 @@ export default function ReportSummary() {
           </Button>
           <Link
             to={createPageUrl(
-              `ReportSerialTrends?patientId=${encodeURIComponent(patientIdForTrends)}&visitId=${encodeURIComponent(visitIdParam)}`
+              `ReportSerialTrends?patientId=${encodeURIComponent(patientIdForTrends)}&visitId=${encodeURIComponent(visitIdParam)}${
+                isPreviousReportVisual ? "&source=previous-report-visual" : ""
+              }`
             )}
             className="inline-flex"
           >
@@ -863,7 +925,7 @@ export default function ReportSummary() {
           </Button>
         </div>
 
-        {sectionWip.length > 0 && (
+        {!hideImportStatusCard && sectionWip.length > 0 && (
           <Card className="border-amber-300 bg-amber-50/80 mb-6">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm text-amber-900">DemoReport import status (WIP)</CardTitle>

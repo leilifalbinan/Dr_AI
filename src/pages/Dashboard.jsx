@@ -62,14 +62,28 @@ export default function Dashboard() {
       if (!res.ok) throw new Error("DemoReport derived payload unavailable");
       const payload = await res.json();
       if (!payload?.ok) throw new Error(payload?.error || "DemoReport payload invalid");
+      if (!payload.visit_id || !payload.patient_id) {
+        throw new Error("DemoReport payload missing required visit_id/patient_id");
+      }
 
       const visitData = {
-        id: "demo-report-visit",
-        patient_id: payload.patient_id || "demo-report-patient",
+        id: payload.visit_id,
+        patient_id: payload.patient_id,
         visit_date: new Date().toISOString().split("T")[0],
-        chief_complaint: payload.chief_complaint || "DemoReport multimodal review",
+        chief_complaint: payload.chief_complaint || "",
         transcription: payload.transcription || "",
-        physician_notes: payload.physician_notes || "",
+        patient_name: payload.patient_name || "",
+        physician_notes: payload.doctor_notes || payload.physician_notes || "",
+        bp_systolic: payload.bp_systolic ?? null,
+        bp_diastolic: payload.bp_diastolic ?? null,
+        heart_rate: payload.heart_rate ?? null,
+        respiratory_rate: payload.respiratory_rate ?? null,
+        temperature: payload.temperature ?? null,
+        temperature_unit: payload.temperature_unit || "fahrenheit",
+        spo2: payload.spo2 ?? null,
+        height: payload.height ?? null,
+        weight: payload.weight ?? null,
+        bmi: payload.bmi ?? null,
         keyword_analysis: payload.keyword_analysis,
         sentiment_analysis: payload.sentiment_analysis,
         semantic_analysis: payload.semantic_analysis,
