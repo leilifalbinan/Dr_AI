@@ -1270,8 +1270,47 @@ def delete_patient(patient_id):
     new_list = [p for p in patients if p["id"] != patient_id]
     if len(new_list) == len(patients):
         return jsonify({"error": "Patient not found"}), 404
+
+    deleted_visit_dirs = []
+    if RUNS_DIR.exists():
+        for visit_dir in RUNS_DIR.iterdir():
+            if not visit_dir.is_dir() or not visit_dir.name.startswith("visit_"):
+                continue
+
+            visit_matches_patient = False
+
+            # Match canonical temp/pre-rename folder pattern: visit_<patient_id>
+            if visit_dir.name == f"visit_{patient_id}":
+                visit_matches_patient = True
+            else:
+                # Match persisted visits by metadata patient_id
+                meta_path = visit_dir / "visit_metadata.json"
+                if meta_path.exists():
+                    try:
+                        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                        if str(meta.get("patient_id", "")) == str(patient_id):
+                            visit_matches_patient = True
+                    except Exception:
+                        pass
+
+                # Match manifest fallback if metadata is missing
+                if not visit_matches_patient:
+                    manifest_path = visit_dir / "manifest.json"
+                    if manifest_path.exists():
+                        try:
+                            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                            if str(manifest.get("patient_id", "")) == str(patient_id):
+                                visit_matches_patient = True
+                        except Exception:
+                            pass
+
+            if visit_matches_patient:
+                shutil.rmtree(visit_dir, ignore_errors=True)
+                deleted_visit_dirs.append(visit_dir.name)
+
     _write_patients(new_list)
-    return jsonify({"success": True})
+    print(f"[Patient] Deleted: {patient_id} (removed visit dirs: {deleted_visit_dirs})")
+    return jsonify({"success": True, "deleted_visit_dirs": deleted_visit_dirs})
 
 
 # ── Visit endpoints ───────────────────────────────────────────────────────────
@@ -1343,8 +1382,9 @@ def delete_visit(visit_id):
     meta = _read_visit_metadata(visit_id)
     if not meta:
         return jsonify({"error": "Visit not found"}), 404
-    path = RUNS_DIR / f"visit_{visit_id}" / "visit_metadata.json"
-    path.unlink(missing_ok=True)
+    visit_dir = RUNS_DIR / f"visit_{visit_id}"
+    shutil.rmtree(visit_dir, ignore_errors=True)
+    print(f"[Visit] Deleted: visit_{visit_id}")
     return jsonify({"success": True})
 
 

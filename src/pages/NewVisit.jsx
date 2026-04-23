@@ -596,34 +596,64 @@ const handleStopFace = async () => {
         }
         jsonlLoggerRef.current = null;
       }*/
-      // Always ensure we have at least one window from the typed transcription.
-      // This covers both: (a) no recording done, (b) recording done but no mic data came through.
+      // Build audio JSONL window(s) from transcription text.
+      // If explicit timestamped patient segments exist, they take priority.
       if (visitData.transcription) {
-        const patientText = extractPatientText(visitData.transcription) || visitData.transcription;
-        const keywordAnalysis   = analyzeKeywords(patientText);
-        const sentimentAnalysis = await analyzeSentiment(patientText);
-        const semanticAnalysis  = analyzeSemantics(patientText);
+        const segments = parsePatientSegments(visitData.transcription).filter(
+          (seg) => typeof seg.text === "string" && seg.text.trim().length > 0
+        );
 
-        if (!jsonlLoggerRef.current) {
-          // No live recording — create a fresh logger
+        if (segments.length > 0) {
+          // Rebuild logger from structured transcript to ensure one JSONL window
+          // per timestamped patient segment (even if coarse live windows exist).
           const t0 = Date.now();
           jsonlLoggerRef.current = new AudioJsonlLogger({
             visitId: selectedPatientId,
             patientId: selectedPatientId,
             t0,
           });
-        }
 
-        // Always add a window from the full transcription text
-        // (complements any live windows already logged)
-        jsonlLoggerRef.current.logWindow({
-          tStart: 0,
-          tEnd: parseFloat((visitData.transcription.trim().split(/\s+/).length / 2.5).toFixed(3)),
-          wordCount: patientText.trim().split(/\s+/).length,
-          keywordAnalysis,
-          sentimentAnalysis,
-          semanticAnalysis,
-        });
+          for (const seg of segments) {
+            const text = seg.text.trim();
+            const keywordAnalysis = analyzeKeywords(text);
+            const sentimentAnalysis = await analyzeSentiment(text);
+            const semanticAnalysis = analyzeSemantics(text);
+
+            jsonlLoggerRef.current.logWindow({
+              tStart: seg.tStart ?? 0,
+              tEnd: seg.tEnd ?? seg.tStart ?? 0,
+              wordCount: text.split(/\s+/).length,
+              keywordAnalysis,
+              sentimentAnalysis,
+              semanticAnalysis,
+            });
+          }
+        } else {
+          if (!jsonlLoggerRef.current) {
+            const t0 = Date.now();
+            jsonlLoggerRef.current = new AudioJsonlLogger({
+              visitId: selectedPatientId,
+              patientId: selectedPatientId,
+              t0,
+            });
+          }
+
+          if (jsonlLoggerRef.current.recordCount === 0) {
+            const patientText = extractPatientText(visitData.transcription) || visitData.transcription;
+            const keywordAnalysis = analyzeKeywords(patientText);
+            const sentimentAnalysis = await analyzeSentiment(patientText);
+            const semanticAnalysis = analyzeSemantics(patientText);
+
+            jsonlLoggerRef.current.logWindow({
+              tStart: 0,
+              tEnd: parseFloat((visitData.transcription.trim().split(/\s+/).length / 2.5).toFixed(3)),
+              wordCount: patientText.trim().split(/\s+/).length,
+              keywordAnalysis,
+              sentimentAnalysis,
+              semanticAnalysis,
+            });
+          }
+        }
       }
 
       if (jsonlLoggerRef.current) {
@@ -632,8 +662,7 @@ const handleStopFace = async () => {
           await jsonlLoggerRef.current.flush('http://localhost:5000');
           console.log('✅ audio.jsonl saved to Flask');
         } catch (err) {
-          console.warn('Flask offline, falling back to download:', err.message);
-          jsonlLoggerRef.current.download();
+          console.warn('Flask offline, skipping audio.jsonl upload:', err.message);
         }
         jsonlLoggerRef.current = null;
       }
