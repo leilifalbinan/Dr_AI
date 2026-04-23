@@ -4,6 +4,9 @@
  * Vite proxies /api/gait to that port (see vite.config.js).
  *
  * cwd must be the Gait folder so gait_outputs resolves correctly.
+ *
+ * Python resolution (first match):
+ *   DR_AI_PYTHON → VIRTUAL_ENV → repo .venv_unified → repo .venv → .venv_face → Gait/venv → py -3.11
  */
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
@@ -16,21 +19,43 @@ const gaitDir = path.join(repoRoot, 'Gait');
 const gaitApi = path.join(gaitDir, 'gait_api.py');
 const isWin = process.platform === 'win32';
 
-// Do NOT use DrAITranscription/venv here: it pins protobuf 6.x, which breaks MediaPipe.
-//
-// Prefer .venv_face FIRST: a partial Gait/venv may install a newer mediapipe wheel
-// that only exposes `tasks` (no `mp.solutions`), which breaks gait_capture_realsense_advanced.py.
-// Gait/venv is used only if .venv_face is missing.
-const venvCandidates = isWin
-  ? [
-      path.join(repoRoot, '.venv_face', 'Scripts', 'python.exe'),
-      path.join(gaitDir, 'venv', 'Scripts', 'python.exe'),
-    ]
-  : [
-      path.join(repoRoot, '.venv_face', 'bin', 'python3'),
-      path.join(gaitDir, 'venv', 'bin', 'python3'),
-      path.join(gaitDir, 'venv', 'bin', 'python'),
-    ];
+function pythonFromVirtualEnv() {
+  const base = process.env.VIRTUAL_ENV;
+  if (!base) return null;
+  const win = path.join(base, 'Scripts', 'python.exe');
+  const unix = path.join(base, 'bin', 'python3');
+  const unixAlt = path.join(base, 'bin', 'python');
+  if (isWin && existsSync(win)) return win;
+  if (!isWin && existsSync(unix)) return unix;
+  if (!isWin && existsSync(unixAlt)) return unixAlt;
+  return null;
+}
+
+function venvPythonFromRoot(venvFolder) {
+  const rel = isWin ? ['Scripts', 'python.exe'] : ['bin', 'python3'];
+  const p = path.join(repoRoot, venvFolder, ...rel);
+  return existsSync(p) ? p : null;
+}
+
+// Order: explicit override → same venv as your shell (VIRTUAL_ENV) → repo unified venvs →
+// legacy .venv_face / Gait/venv. Do NOT use DrAITranscription/venv here (protobuf vs MediaPipe).
+const venvCandidates = [];
+const drAiPython = process.env.DR_AI_PYTHON;
+if (drAiPython && existsSync(drAiPython)) venvCandidates.push(drAiPython);
+const active = pythonFromVirtualEnv();
+if (active) venvCandidates.push(active);
+const unified = venvPythonFromRoot('.venv_unified');
+if (unified) venvCandidates.push(unified);
+const dotVenv = venvPythonFromRoot('.venv');
+if (dotVenv) venvCandidates.push(dotVenv);
+if (isWin) {
+  venvCandidates.push(path.join(repoRoot, '.venv_face', 'Scripts', 'python.exe'));
+  venvCandidates.push(path.join(gaitDir, 'venv', 'Scripts', 'python.exe'));
+} else {
+  venvCandidates.push(path.join(repoRoot, '.venv_face', 'bin', 'python3'));
+  venvCandidates.push(path.join(gaitDir, 'venv', 'bin', 'python3'));
+  venvCandidates.push(path.join(gaitDir, 'venv', 'bin', 'python'));
+}
 
 let python;
 let pythonArgs;
@@ -50,6 +75,8 @@ if (!existsSync(gaitApi)) {
   console.error('Gait server not found:', gaitApi);
   process.exit(1);
 }
+
+console.error(`[dev:gait] Python: ${python}`);
 
 const child = spawn(python, pythonArgs, {
   cwd: gaitDir,

@@ -24,10 +24,10 @@ import { Badge } from "@/components/ui/badge";
 import { generateCombinedReportPDF } from "@/utils/combinedReportPdf";
 import { demoSerialVisitSnapshots } from "@/data/reportSerialTrendDemoData";
 import {
-  DEMO_REPORT_PATIENT_ID,
   DEMO_REPORT_VISIT_ID,
   getReportDemoPackage,
 } from "@/data/reportSummaryDemoData";
+import { buildMichaelSerialStorageVisits } from "@/data/michaelSerialVisitStorageSeeds";
 import VisitTranscriptionNlpPanel from "@/components/VisitTranscriptionNlpPanel";
 
 ChartJS.register(
@@ -84,6 +84,50 @@ function qualLabel(v, low, mid) {
 
 const chartBox = "relative h-[180px] w-full";
 const chartBoxTall = "relative h-[220px] w-full";
+const MAX_GAIT_CHART_POINTS = 25;
+
+function summarizeGaitWindows(windows, maxPoints = MAX_GAIT_CHART_POINTS) {
+  if (!Array.isArray(windows) || windows.length <= maxPoints) return windows || [];
+
+  const bucketSize = windows.length / maxPoints;
+  const summarized = [];
+
+  for (let i = 0; i < maxPoints; i += 1) {
+    const start = Math.floor(i * bucketSize);
+    const end = Math.min(windows.length, Math.floor((i + 1) * bucketSize));
+    const bucket = windows.slice(start, end);
+    if (!bucket.length) continue;
+
+    const mean = (vals) => {
+      const nums = vals.filter((v) => v != null);
+      if (!nums.length) return null;
+      return nums.reduce((a, b) => a + b, 0) / nums.length;
+    };
+
+    summarized.push({
+      t_start: mean(bucket.map((w) => w.t_start)),
+      t_end: mean(bucket.map((w) => w.t_end)),
+      features: {
+        speed_mps: mean(bucket.map((w) => w.features?.speed_mps)),
+        symmetry: mean(bucket.map((w) => w.features?.symmetry)),
+        stability: mean(bucket.map((w) => w.features?.stability)),
+      },
+    });
+  }
+
+  return summarized;
+}
+
+function smoothSeries(values, radius = 1) {
+  if (!Array.isArray(values) || values.length === 0 || radius <= 0) return values || [];
+  return values.map((_, idx) => {
+    const start = Math.max(0, idx - radius);
+    const end = Math.min(values.length, idx + radius + 1);
+    const slice = values.slice(start, end).filter((v) => v != null);
+    if (!slice.length) return null;
+    return slice.reduce((a, b) => a + b, 0) / slice.length;
+  });
+}
 
 function AiDiagnosticAssessmentPanel({ assessment }) {
   const dx = assessment?.suggested_diagnoses;
@@ -204,6 +248,8 @@ export default function ReportSummary() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const visitIdParam = searchParams.get("visitId") || DEMO_REPORT_VISIT_ID;
+  const reportSource = searchParams.get("source") || "";
+  const isPreviousReportVisual = reportSource === "previous-report-visual";
 
   const { data: loadedVisit } = useQuery({
     queryKey: ["visit", visitIdParam],
@@ -211,20 +257,33 @@ export default function ReportSummary() {
       const rows = await api.entities.Visit.filter({ id: visitIdParam });
       return rows[0];
     },
-    enabled: !!visitIdParam,
+    enabled: !!visitIdParam && !isPreviousReportVisual,
   });
 
   const reportPkg = useMemo(() => getReportDemoPackage(visitIdParam), [visitIdParam]);
-  const face = reportPkg.face;
-  const audio = reportPkg.audio;
-  const gait = reportPkg.gait;
+  const michaelSerialSeededVisits = useMemo(() => buildMichaelSerialStorageVisits(), []);
+  const seededVisit = useMemo(
+    () => michaelSerialSeededVisits.find((v) => v.id === visitIdParam),
+    [michaelSerialSeededVisits, visitIdParam]
+  );
+  const face = isPreviousReportVisual
+    ? reportPkg.face
+    : (loadedVisit?.multimodal_jsonl?.face || []);
+  const audio = isPreviousReportVisual
+    ? reportPkg.audio
+    : (loadedVisit?.multimodal_jsonl?.audio || []);
+  const gait = isPreviousReportVisual
+    ? reportPkg.gait
+    : (loadedVisit?.multimodal_jsonl?.gait || []);
   const [showFaceRaw, setShowFaceRaw] = useState(false);
   const [showAudioRaw, setShowAudioRaw] = useState(false);
   const [showGaitRaw, setShowGaitRaw] = useState(false);
   const [reportTab, setReportTab] = useState("multimodal");
   const [keywordView, setKeywordView] = useState("diagnostic");
 
-  const patientIdForTrends = loadedVisit?.patient_id ?? DEMO_REPORT_PATIENT_ID;
+  const patientIdForTrends = isPreviousReportVisual
+    ? (loadedVisit?.patient_id ?? seededVisit?.patient_id ?? reportPkg.face?.[0]?.patient_id ?? "")
+    : (loadedVisit?.patient_id ?? "");
 
   const { data: patient } = useQuery({
     queryKey: ["patient", patientIdForTrends],
@@ -232,44 +291,85 @@ export default function ReportSummary() {
       const rows = await api.entities.Patient.filter({ id: patientIdForTrends });
       return rows[0];
     },
-    enabled: !!patientIdForTrends,
+    enabled: !!patientIdForTrends && !isPreviousReportVisual,
   });
 
   const patientDisplayName = useMemo(() => {
-    if (!patient) return "Unknown Patient";
+    if (isPreviousReportVisual) {
+      if (patientIdForTrends === "patient-demo-1") return "Michael Reyes";
+      if (patientIdForTrends === "patient-demo-2") return "Sarah Martinez";
+    }
+    const visitPatientName =
+      loadedVisit?.patient_name;
+    if (!patient) return visitPatientName || "Unknown Patient";
     const fullName = [patient.first_name, patient.last_name].filter(Boolean).join(" ").trim();
-    return fullName || "Unknown Patient";
+    return fullName || visitPatientName || "Unknown Patient";
+  }, [patient, patientIdForTrends, isPreviousReportVisual, loadedVisit]);
+
+  const patientMrn = useMemo(() => {
+    const mrn = patient?.medical_record_number;
+    if (typeof mrn === "string" && mrn.trim()) return mrn.trim();
+    if (mrn != null && String(mrn).trim()) return String(mrn).trim();
+    return "—";
   }, [patient]);
 
   const aiAssessment = useMemo(() => {
+    if (isPreviousReportVisual) {
+      if (seededVisit?.ai_assessment && typeof seededVisit.ai_assessment === "object") return seededVisit.ai_assessment;
+      return reportPkg.aiAssessment;
+    }
     const a = loadedVisit?.ai_assessment;
     if (a && typeof a === "object") return a;
-    return reportPkg.aiAssessment;
-  }, [loadedVisit, reportPkg.aiAssessment]);
+    return null;
+  }, [isPreviousReportVisual, loadedVisit, seededVisit, reportPkg.aiAssessment]);
 
   const { nlpVisit, nlpUsingDemoFallback } = useMemo(() => {
-    const demo = reportPkg.transcriptionNlp;
-    if (!loadedVisit) {
-      return { nlpVisit: demo, nlpUsingDemoFallback: true };
+    if (isPreviousReportVisual) {
+      if (seededVisit) {
+        return { nlpVisit: seededVisit, nlpUsingDemoFallback: false };
+      }
+      return { nlpVisit: reportPkg.transcriptionNlp, nlpUsingDemoFallback: false };
     }
-    const hasNlpSaved = Boolean(
-      loadedVisit.transcription ||
-        loadedVisit.keyword_analysis ||
-        loadedVisit.sentiment_analysis ||
-        loadedVisit.semantic_analysis ||
-        loadedVisit.physician_notes ||
-        loadedVisit.ai_comparison
-    );
-    if (!hasNlpSaved) {
-      return {
-        nlpVisit: { ...loadedVisit, ...demo },
-        nlpUsingDemoFallback: true,
-      };
-    }
-    return { nlpVisit: loadedVisit, nlpUsingDemoFallback: false };
-  }, [loadedVisit, reportPkg.transcriptionNlp]);
+    return { nlpVisit: loadedVisit || {}, nlpUsingDemoFallback: false };
+  }, [isPreviousReportVisual, loadedVisit, seededVisit, reportPkg.transcriptionNlp]);
 
   const vitalsDisplay = useMemo(() => {
+    if (isPreviousReportVisual) {
+      const v = loadedVisit;
+      if (v && (v.bp_systolic || v.heart_rate)) {
+        return {
+          visit_date: v.visit_date,
+          chief_complaint: v.chief_complaint,
+          bp_systolic: v.bp_systolic,
+          bp_diastolic: v.bp_diastolic,
+          heart_rate: v.heart_rate,
+          respiratory_rate: v.respiratory_rate,
+          temperature: v.temperature,
+          temperature_unit: v.temperature_unit || "fahrenheit",
+          spo2: v.spo2,
+          height: v.height,
+          weight: v.weight,
+          bmi: v.bmi,
+        };
+      }
+      if (seededVisit && (seededVisit.bp_systolic || seededVisit.heart_rate)) {
+        return {
+          visit_date: seededVisit.visit_date,
+          chief_complaint: seededVisit.chief_complaint,
+          bp_systolic: seededVisit.bp_systolic,
+          bp_diastolic: seededVisit.bp_diastolic,
+          heart_rate: seededVisit.heart_rate,
+          respiratory_rate: seededVisit.respiratory_rate,
+          temperature: seededVisit.temperature,
+          temperature_unit: seededVisit.temperature_unit || "fahrenheit",
+          spo2: seededVisit.spo2,
+          height: seededVisit.height,
+          weight: seededVisit.weight,
+          bmi: seededVisit.bmi,
+        };
+      }
+      return { ...reportPkg.visitSnapshot };
+    }
     const v = loadedVisit;
     if (v && (v.bp_systolic || v.heart_rate)) {
       return {
@@ -287,18 +387,25 @@ export default function ReportSummary() {
         bmi: v.bmi,
       };
     }
-    return { ...reportPkg.visitSnapshot };
-  }, [loadedVisit, reportPkg.visitSnapshot]);
-
+    return {};
+  }, [isPreviousReportVisual, loadedVisit, seededVisit, reportPkg.visitSnapshot]);
   const visitMeta = useMemo(() => {
     const allRecs = [...face, ...audio, ...gait];
-    if (!allRecs.length) return null;
+    if (!allRecs.length) {
+      if (loadedVisit) {
+        return {
+          visitId: visitIdParam,
+          patientId: loadedVisit.patient_id ?? "—",
+        };
+      }
+      return null;
+    }
     const first = allRecs[0];
     return {
       visitId: visitIdParam,
-      patientId: loadedVisit?.patient_id ?? first.patient_id ?? "—",
+      patientId: loadedVisit?.patient_id ?? (isPreviousReportVisual ? seededVisit?.patient_id : null) ?? first.patient_id ?? "—",
     };
-  }, [face, audio, gait, visitIdParam, loadedVisit]);
+  }, [face, audio, gait, visitIdParam, loadedVisit, seededVisit, isPreviousReportVisual]);
 
   const { cf, ca, cg, co } = useMemo(() => {
     const f = avgConf(face);
@@ -308,7 +415,6 @@ export default function ReportSummary() {
     const o = all.length ? all.reduce((x, y) => x + y, 0) / all.length : null;
     return { cf: f, ca: a, cg: g, co: o };
   }, [face, audio, gait]);
-
   const faceDerived = useMemo(() => {
     if (!face.length) return null;
     const summary = face.find((r) => r.type === "summary");
@@ -388,7 +494,7 @@ export default function ReportSummary() {
     const anyInvalid = audio.some((r) => r.valid === false);
     const sentLabels = windows.map((w) => `${w.t_start}s`);
     const sentData = windows.map((w) => w.features?.sentiment?.polarity ?? 0);
-    const sentColors = sentData.map((v) => (v >= 0 ? "#059669" : "#dc2626"));
+    const pointColors = sentData.map((v) => (v >= 0 ? "#059669" : "#dc2626"));
 
     const kwMap = {};
     const diagSet = new Set();
@@ -416,6 +522,7 @@ export default function ReportSummary() {
         topic,
         avg: scores.reduce((x, y) => x + y, 0) / scores.length,
       }))
+      .filter(({ topic }) => !/^temporal_|^severity_/i.test(String(topic)))
       .sort((a, b) => b.avg - a.avg);
 
     return {
@@ -428,8 +535,15 @@ export default function ReportSummary() {
           {
             label: "Sentiment polarity",
             data: sentData,
-            backgroundColor: sentColors,
-            borderRadius: 4,
+            borderColor: "#7c3aed",
+            backgroundColor: "rgba(124,58,237,0.1)",
+            pointBackgroundColor: pointColors,
+            pointBorderColor: "#ffffff",
+            pointBorderWidth: 1.5,
+            pointRadius: 4,
+            pointHoverRadius: 5,
+            tension: 0.25,
+            fill: false,
           },
         ],
       },
@@ -481,14 +595,33 @@ export default function ReportSummary() {
 
     const gaitNotes = summary?.notes;
 
+    const chartWindows = summarizeGaitWindows(windows, MAX_GAIT_CHART_POINTS);
+
+    const speedSeries = chartWindows.map((w) => w.features?.speed_mps ?? null);
+    const symmetrySeries = chartWindows.map((w) => w.features?.symmetry ?? null);
+    const stabilitySeries = chartWindows.map((w) => w.features?.stability ?? null);
+
+    const speedSmoothed = smoothSeries(speedSeries, 1);
+    const symmetrySmoothed = smoothSeries(symmetrySeries, 1);
+    const stabilitySmoothed = smoothSeries(stabilitySeries, 1);
+
+    const speedVals = speedSmoothed.filter((v) => v != null);
+    const speedMin = speedVals.length ? Math.min(...speedVals) : null;
+    const speedMax = speedVals.length ? Math.max(...speedVals) : null;
+    const speedRange = speedMin != null && speedMax != null ? speedMax - speedMin : null;
+    const speedPad =
+      speedRange != null
+        ? Math.max(0.2, speedRange * 0.6) // larger pad for smoother-looking visual range
+        : 0.2;
+
     const gaitChart =
       windows.length > 0
         ? {
-            labels: windows.map((w) => `${w.t_start}s`),
+            labels: chartWindows.map((w) => `${(w.t_start ?? 0).toFixed(1)}s`),
             datasets: [
               {
                 label: "Speed (m/s)",
-                data: windows.map((w) => w.features?.speed_mps ?? null),
+                data: speedSmoothed,
                 borderColor: "#047857",
                 backgroundColor: "transparent",
                 tension: 0.3,
@@ -497,7 +630,7 @@ export default function ReportSummary() {
               },
               {
                 label: "Symmetry",
-                data: windows.map((w) => w.features?.symmetry ?? null),
+                data: symmetrySmoothed,
                 borderColor: "#10b981",
                 backgroundColor: "transparent",
                 tension: 0.3,
@@ -507,7 +640,7 @@ export default function ReportSummary() {
               },
               {
                 label: "Stability",
-                data: windows.map((w) => w.features?.stability ?? null),
+                data: stabilitySmoothed,
                 borderColor: "#6ee7b7",
                 backgroundColor: "transparent",
                 tension: 0.3,
@@ -516,6 +649,10 @@ export default function ReportSummary() {
                 pointRadius: 3,
               },
             ],
+            speedAxis: {
+              min: speedMin != null ? Math.max(0, speedMin - speedPad) : undefined,
+              max: speedMax != null ? speedMax + speedPad : undefined,
+            },
           }
         : null;
 
@@ -655,9 +792,8 @@ export default function ReportSummary() {
             </div>
           </div>
           <div className="text-right text-xs font-mono text-teal-800/80 sm:pr-2">
-            <div className="font-semibold">{visitMeta.visitId}</div>
             <div className="font-semibold">{patientDisplayName}</div>
-            <div>Patient {visitMeta.patientId}</div>
+            <div>MRN {patientMrn}</div>
           </div>
         </div>
 
@@ -676,7 +812,9 @@ export default function ReportSummary() {
           </Button>
           <Link
             to={createPageUrl(
-              `ReportSerialTrends?patientId=${encodeURIComponent(patientIdForTrends)}&visitId=${encodeURIComponent(visitIdParam)}`
+              `ReportSerialTrends?patientId=${encodeURIComponent(patientIdForTrends)}&visitId=${encodeURIComponent(visitIdParam)}${
+                isPreviousReportVisual ? "&source=previous-report-visual" : ""
+              }`
             )}
             className="inline-flex"
           >
@@ -720,10 +858,6 @@ export default function ReportSummary() {
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="rounded-md bg-teal-900 text-teal-50 p-4 space-y-3 text-sm">
-                  <div>
-                    <p className="text-[0.65rem] uppercase tracking-wider text-teal-300/90">Visit ID</p>
-                    <p className="font-mono font-semibold">{visitMeta.visitId}</p>
-                  </div>
                   {loadedVisit?.visit_number != null && loadedVisit.visit_number !== "" && (
                     <div>
                       <p className="text-[0.65rem] uppercase tracking-wider text-teal-300/90">Visit #</p>
@@ -735,15 +869,9 @@ export default function ReportSummary() {
                     <p className="font-semibold">{patientDisplayName}</p>
                   </div>
                   <div>
-                    <p className="text-[0.65rem] uppercase tracking-wider text-teal-300/90">Patient ID</p>
-                    <p className="font-mono font-semibold">{visitMeta.patientId}</p>
+                    <p className="text-[0.65rem] uppercase tracking-wider text-teal-300/90">MRN</p>
+                    <p className="font-mono font-semibold">{patientMrn}</p>
                   </div>
-                  {patient?.medical_record_number ? (
-                    <div>
-                      <p className="text-[0.65rem] uppercase tracking-wider text-teal-300/90">MRN</p>
-                      <p className="font-mono font-semibold">{patient.medical_record_number}</p>
-                    </div>
-                  ) : null}
                   {patient?.primary_diagnosis ? (
                     <div>
                       <p className="text-[0.65rem] uppercase tracking-wider text-teal-300/90">Primary diagnosis</p>
@@ -777,71 +905,58 @@ export default function ReportSummary() {
                   </div>
                 ) : null}
                 <div className="grid grid-cols-2 gap-2 items-stretch">
-                  {vitalsDisplay.bp_systolic != null && vitalsDisplay.bp_diastolic != null && (
-                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2.5 flex flex-col items-center justify-center gap-1 min-h-[4.5rem] min-w-0 text-center">
-                      <p className="text-[0.6rem] text-teal-600 uppercase tracking-wide leading-tight">BP mmHg</p>
-                      <p className="text-lg font-bold text-teal-900 font-mono tabular-nums leading-tight">
-                        {vitalsDisplay.bp_systolic}/{vitalsDisplay.bp_diastolic}
-                      </p>
-                    </div>
-                  )}
-                  {vitalsDisplay.heart_rate != null && vitalsDisplay.heart_rate !== "" && (
-                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2.5 flex flex-col items-center justify-center gap-1 min-h-[4.5rem] min-w-0 text-center">
-                      <p className="text-[0.6rem] text-teal-600 uppercase tracking-wide leading-tight">HR bpm</p>
-                      <p className="text-lg font-bold text-teal-900 font-mono tabular-nums leading-tight">
-                        {vitalsDisplay.heart_rate}
-                      </p>
-                    </div>
-                  )}
-                  {vitalsDisplay.respiratory_rate != null && vitalsDisplay.respiratory_rate !== "" && (
-                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2.5 flex flex-col items-center justify-center gap-1 min-h-[4.5rem] min-w-0 text-center">
-                      <p className="text-[0.6rem] text-teal-600 uppercase tracking-wide leading-tight">RR /min</p>
-                      <p className="text-lg font-bold text-teal-900 font-mono tabular-nums leading-tight">
-                        {vitalsDisplay.respiratory_rate}
-                      </p>
-                    </div>
-                  )}
-                  {vitalsDisplay.temperature != null && vitalsDisplay.temperature !== "" && (
-                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2.5 flex flex-col items-center justify-center gap-1 min-h-[4.5rem] min-w-0 text-center">
-                      <p className="text-[0.6rem] text-teal-600 uppercase tracking-wide leading-tight">Temp</p>
-                      <p className="text-lg font-bold text-teal-900 font-mono tabular-nums leading-tight">
-                        {vitalsDisplay.temperature}
-                        {vitalsDisplay.temperature_unit === "celsius" ? " °C" : " °F"}
-                      </p>
-                    </div>
-                  )}
-                  {vitalsDisplay.spo2 != null && vitalsDisplay.spo2 !== "" && (
-                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2.5 flex flex-col items-center justify-center gap-1 min-h-[4.5rem] min-w-0 text-center">
-                      <p className="text-[0.6rem] text-teal-600 uppercase tracking-wide leading-tight">SpO₂</p>
-                      <p className="text-lg font-bold text-teal-900 font-mono tabular-nums leading-tight">
-                        {vitalsDisplay.spo2}%
-                      </p>
-                    </div>
-                  )}
-                  {vitalsDisplay.height != null && vitalsDisplay.height !== "" && (
-                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2.5 flex flex-col items-center justify-center gap-1 min-h-[4.5rem] min-w-0 text-center">
-                      <p className="text-[0.6rem] text-teal-600 uppercase tracking-wide leading-tight">H cm</p>
-                      <p className="text-lg font-bold text-teal-900 font-mono tabular-nums leading-tight">
-                        {vitalsDisplay.height}
-                      </p>
-                    </div>
-                  )}
-                  {vitalsDisplay.weight != null && vitalsDisplay.weight !== "" && (
-                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2.5 flex flex-col items-center justify-center gap-1 min-h-[4.5rem] min-w-0 text-center">
-                      <p className="text-[0.6rem] text-teal-600 uppercase tracking-wide leading-tight">W kg</p>
-                      <p className="text-lg font-bold text-teal-900 font-mono tabular-nums leading-tight">
-                        {vitalsDisplay.weight}
-                      </p>
-                    </div>
-                  )}
-                  {vitalsDisplay.bmi != null && vitalsDisplay.bmi !== "" && (
-                    <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2.5 flex flex-col items-center justify-center gap-1 min-h-[4.5rem] min-w-0 text-center">
-                      <p className="text-[0.6rem] text-teal-600 uppercase tracking-wide leading-tight">BMI</p>
-                      <p className="text-lg font-bold text-teal-900 font-mono tabular-nums leading-tight">
-                        {vitalsDisplay.bmi}
-                      </p>
-                    </div>
-                  )}
+                  <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2.5 flex flex-col items-center justify-center gap-1 min-h-[4.5rem] min-w-0 text-center">
+                    <p className="text-[0.6rem] text-teal-600 uppercase tracking-wide leading-tight">BP mmHg</p>
+                    <p className="text-lg font-bold text-teal-900 font-mono tabular-nums leading-tight">
+                      {vitalsDisplay.bp_systolic != null && vitalsDisplay.bp_diastolic != null
+                        ? `${vitalsDisplay.bp_systolic}/${vitalsDisplay.bp_diastolic}`
+                        : "-"}
+                    </p>
+                  </div>
+                  <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2.5 flex flex-col items-center justify-center gap-1 min-h-[4.5rem] min-w-0 text-center">
+                    <p className="text-[0.6rem] text-teal-600 uppercase tracking-wide leading-tight">HR bpm</p>
+                    <p className="text-lg font-bold text-teal-900 font-mono tabular-nums leading-tight">
+                      {vitalsDisplay.heart_rate != null && vitalsDisplay.heart_rate !== "" ? vitalsDisplay.heart_rate : "-"}
+                    </p>
+                  </div>
+                  <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2.5 flex flex-col items-center justify-center gap-1 min-h-[4.5rem] min-w-0 text-center">
+                    <p className="text-[0.6rem] text-teal-600 uppercase tracking-wide leading-tight">RR /min</p>
+                    <p className="text-lg font-bold text-teal-900 font-mono tabular-nums leading-tight">
+                      {vitalsDisplay.respiratory_rate != null && vitalsDisplay.respiratory_rate !== "" ? vitalsDisplay.respiratory_rate : "-"}
+                    </p>
+                  </div>
+                  <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2.5 flex flex-col items-center justify-center gap-1 min-h-[4.5rem] min-w-0 text-center">
+                    <p className="text-[0.6rem] text-teal-600 uppercase tracking-wide leading-tight">Temp</p>
+                    <p className="text-lg font-bold text-teal-900 font-mono tabular-nums leading-tight">
+                      {vitalsDisplay.temperature != null && vitalsDisplay.temperature !== ""
+                        ? `${vitalsDisplay.temperature}${vitalsDisplay.temperature_unit === "celsius" ? " °C" : " °F"}`
+                        : "-"}
+                    </p>
+                  </div>
+                  <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2.5 flex flex-col items-center justify-center gap-1 min-h-[4.5rem] min-w-0 text-center">
+                    <p className="text-[0.6rem] text-teal-600 uppercase tracking-wide leading-tight">SpO₂</p>
+                    <p className="text-lg font-bold text-teal-900 font-mono tabular-nums leading-tight">
+                      {vitalsDisplay.spo2 != null && vitalsDisplay.spo2 !== "" ? `${vitalsDisplay.spo2}%` : "-"}
+                    </p>
+                  </div>
+                  <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2.5 flex flex-col items-center justify-center gap-1 min-h-[4.5rem] min-w-0 text-center">
+                    <p className="text-[0.6rem] text-teal-600 uppercase tracking-wide leading-tight">H cm</p>
+                    <p className="text-lg font-bold text-teal-900 font-mono tabular-nums leading-tight">
+                      {vitalsDisplay.height != null && vitalsDisplay.height !== "" ? vitalsDisplay.height : "-"}
+                    </p>
+                  </div>
+                  <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2.5 flex flex-col items-center justify-center gap-1 min-h-[4.5rem] min-w-0 text-center">
+                    <p className="text-[0.6rem] text-teal-600 uppercase tracking-wide leading-tight">W kg</p>
+                    <p className="text-lg font-bold text-teal-900 font-mono tabular-nums leading-tight">
+                      {vitalsDisplay.weight != null && vitalsDisplay.weight !== "" ? vitalsDisplay.weight : "-"}
+                    </p>
+                  </div>
+                  <div className="rounded-md bg-teal-50 border border-teal-100 px-2 py-2.5 flex flex-col items-center justify-center gap-1 min-h-[4.5rem] min-w-0 text-center">
+                    <p className="text-[0.6rem] text-teal-600 uppercase tracking-wide leading-tight">BMI</p>
+                    <p className="text-lg font-bold text-teal-900 font-mono tabular-nums leading-tight">
+                      {vitalsDisplay.bmi != null && vitalsDisplay.bmi !== "" ? vitalsDisplay.bmi : "-"}
+                    </p>
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -889,7 +1004,11 @@ export default function ReportSummary() {
               </button>
             </div>
 
-            {reportTab === "ai" && <AiDiagnosticAssessmentPanel assessment={aiAssessment} />}
+            {reportTab === "ai" && (
+              <div className="space-y-3">
+                <AiDiagnosticAssessmentPanel assessment={aiAssessment} />
+              </div>
+            )}
 
             {reportTab === "nlp" && (
               <VisitTranscriptionNlpPanel visit={nlpVisit} usingDemoFallback={nlpUsingDemoFallback} />
@@ -1065,7 +1184,7 @@ export default function ReportSummary() {
                     </CardHeader>
                     <CardContent>
                       <div className={chartBox}>
-                        <Chart type="bar" data={audioDerived.sentiment} options={sentimentOptions} />
+                        <Chart type="line" data={audioDerived.sentiment} options={sentimentOptions} />
                       </div>
                     </CardContent>
                   </Card>
@@ -1164,10 +1283,13 @@ export default function ReportSummary() {
                   <Card className="border-teal-200 bg-white/80 backdrop-blur">
                     <CardHeader className="pb-2">
                       <CardTitle className="text-xs font-mono uppercase tracking-wider text-teal-600">
-                        Topic distribution
+                        Topic strength
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-2">
+                      <p className="text-[0.65rem] text-teal-600">
+                        Ranked relevance score (0 to 1)
+                      </p>
                       {audioDerived.topicRows.map(({ topic, avg }) => (
                         <div key={topic} className="flex items-center gap-2">
                           <span className="w-40 shrink-0 text-sm text-teal-900 truncate">
@@ -1179,8 +1301,8 @@ export default function ReportSummary() {
                               style={{ width: `${(avg * 100).toFixed(0)}%` }}
                             />
                           </div>
-                          <span className="w-9 text-right font-mono text-xs text-teal-600">
-                            {(avg * 100).toFixed(0)}%
+                          <span className="w-12 text-right font-mono text-xs text-teal-600">
+                            {avg.toFixed(2)}
                           </span>
                         </div>
                       ))}
@@ -1274,7 +1396,21 @@ export default function ReportSummary() {
                     </CardHeader>
                     <CardContent>
                       <div className={chartBoxTall}>
-                        <Chart type="line" data={gaitDerived.gaitChart} options={gaitChartOptions} />
+                        <Chart
+                          type="line"
+                          data={gaitDerived.gaitChart}
+                          options={{
+                            ...gaitChartOptions,
+                            scales: {
+                              ...gaitChartOptions.scales,
+                              ySpeed: {
+                                ...gaitChartOptions.scales.ySpeed,
+                                min: gaitDerived.gaitChart?.speedAxis?.min,
+                                max: gaitDerived.gaitChart?.speedAxis?.max,
+                              },
+                            },
+                          }}
+                        />
                       </div>
                     </CardContent>
                   </Card>
@@ -1326,12 +1462,6 @@ export default function ReportSummary() {
               </section>
             )}
 
-            <p className="text-xs text-teal-600 pb-4">
-              Demo data — wire this page to live JSONL or API when ready.{" "}
-              <Link to={createPageUrl("Dashboard")} className="underline text-teal-800">
-                Back to dashboard
-              </Link>
-            </p>
               </>
             )}
           </main>

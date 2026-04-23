@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Activity, Users, Plus, LogOut } from 'lucide-react';
+import { Activity, Users, Plus, FileBarChart, LogOut } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 
@@ -12,10 +12,15 @@ export default function Layout({ children }) {
     { name: 'Dashboard', path: '/dashboard', icon: Activity },
     { name: 'Patients', path: '/patients', icon: Users },
     { name: 'New Visit', path: '/new-visit', icon: Plus },
+    {
+      name: 'Previous Report Visual',
+      path: '/report-summary?visitId=visit-demo-1&source=previous-report-visual',
+      icon: FileBarChart
+    },
   ];
 
   const isActive = (path) => {
-    return location.pathname === path;
+    return location.pathname === path.split('?')[0];
   };
 
   return (

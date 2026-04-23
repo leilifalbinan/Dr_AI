@@ -129,18 +129,49 @@ export const extractPatientText = (transcription) => {
 
 export const analyzeKeywords = (text) => {
   const lowerText = text.toLowerCase();
-  const words = lowerText.split(/\s+/);
+  const words = lowerText.match(/[a-z0-9']+/g) || [];
   const totalWords = words.length;
   const diagnosticKeywords = {};
+
+  const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  // Negation cues to avoid counting "no chest pain", "denies fever", etc.
+  const NEGATION_TERMS = new Set([
+    'no',
+    'not',
+    'deny',
+    'denies',
+    'denied',
+    'without',
+    'never',
+    'none',
+    'negative',
+    'free',
+  ]);
+
+  const isNegatedAt = (matchIndex) => {
+    const context = lowerText.slice(Math.max(0, matchIndex - 80), matchIndex);
+    const ctxTokens = context.match(/[a-z0-9']+/g) || [];
+    const tail = ctxTokens.slice(-4);
+    if (tail.some((t) => NEGATION_TERMS.has(t))) return true;
+    const tailStr = tail.join(' ');
+    if (tailStr.includes('negative for')) return true;
+    if (tailStr.includes('free of')) return true;
+    return false;
+  };
   
   // Find phrases first 
   Object.entries(DIAGNOSTIC_KEYWORDS).forEach(([category, data]) => {
     data.phrases?.forEach(phrase => {
-      const regex = new RegExp(`\\b${phrase}\\b`, 'gi');
-      const matches = lowerText.match(regex);
-      if (matches) {
+      const regex = new RegExp(`\\b${escapeRegExp(phrase)}\\b`, 'gi');
+      let match;
+      let count = 0;
+      while ((match = regex.exec(lowerText)) !== null) {
+        if (!isNegatedAt(match.index)) count++;
+      }
+      if (count > 0) {
         diagnosticKeywords[phrase] = {
-          count: matches.length,
+          count,
           category: category
         };
       }
@@ -148,22 +179,26 @@ export const analyzeKeywords = (text) => {
   });
   
   // Find single words (exclude if already in phrase)
-  const phrasesFound = Object.keys(diagnosticKeywords).join(' ').toLowerCase();
+  const phraseWordsFound = new Set(
+    Object.keys(diagnosticKeywords)
+      .flatMap((p) => p.split(/\s+/))
+      .filter(Boolean)
+  );
   
-  words.forEach(word => {
-    // Skip if word is part of a phrase we already found
-    if (phrasesFound.includes(word)) return;
-    
-    // Check if word is in any category
-    Object.entries(DIAGNOSTIC_KEYWORDS).forEach(([category, data]) => {
-      if (data.words?.includes(word)) {
+  Object.entries(DIAGNOSTIC_KEYWORDS).forEach(([category, data]) => {
+    (data.words || []).forEach((word) => {
+      if (phraseWordsFound.has(word)) return;
+      const regex = new RegExp(`\\b${escapeRegExp(word)}\\b`, 'gi');
+      let match;
+      let count = 0;
+      while ((match = regex.exec(lowerText)) !== null) {
+        if (!isNegatedAt(match.index)) count++;
+      }
+      if (count > 0) {
         if (!diagnosticKeywords[word]) {
-          diagnosticKeywords[word] = {
-            count: 0,
-            category: category
-          };
+          diagnosticKeywords[word] = { count: 0, category };
         }
-        diagnosticKeywords[word].count++;
+        diagnosticKeywords[word].count += count;
       }
     });
   });
@@ -193,11 +228,12 @@ export const analyzeKeywords = (text) => {
   const keywordPositions = {};
   keywordList.forEach(keyword => {
     keywordPositions[keyword] = [];
-    const regex = new RegExp(`\\b${keyword}\\b`, 'gi');
+    const regex = new RegExp(`\\b${escapeRegExp(keyword)}\\b`, 'gi');
     let match;
     while ((match = regex.exec(lowerText)) !== null) {
+      if (isNegatedAt(match.index)) continue;
       // Approximate word position
-      const wordsBefore = lowerText.substring(0, match.index).split(/\s+/).length;
+      const wordsBefore = (lowerText.substring(0, match.index).match(/[a-z0-9']+/g) || []).length;
       keywordPositions[keyword].push(wordsBefore);
     }
   });
@@ -381,15 +417,40 @@ function extractEmotionalIndicators(text) {
 export const analyzeSemantics = (text) => {
   const keywordAnalysis = analyzeKeywords(text);
   const topWords = Object.keys(keywordAnalysis.diagnostic_keywords);
+  const topWordSet = new Set(topWords.map((w) => String(w).toLowerCase()));
   
   // Determine key themes
   const themes = [];
-  if (topWords.some(w => ['pain', 'ache', 'sore'].includes(w))) themes.push('widespread pain');
-  if (topWords.includes('fatigue')) themes.push('fatigue');
-  if (topWords.includes('nausea')) themes.push('nausea');
-  if (topWords.includes('sleep') || topWords.includes('insomnia')) themes.push('sleep disturbances');
-  if (topWords.includes('stomach') || topWords.includes('bloated')) themes.push('gastrointestinal issues');
-  if (topWords.includes('dizzy') || topWords.includes('dizziness')) themes.push('dizziness');
+  if ([...topWordSet].some(w => ['pain', 'ache', 'sore', 'stiff', 'joint', 'muscle'].includes(w))) {
+    themes.push('pain symptoms');
+  }
+  if ([...topWordSet].some(w => ['fatigue', 'exhausted', 'tired', 'weak', 'weakness'].includes(w))) {
+    themes.push('fatigue');
+  }
+  if ([...topWordSet].some(w => ['nausea', 'vomiting'].includes(w))) {
+    themes.push('nausea');
+  }
+  if ([...topWordSet].some(w => ['sleep', 'insomnia'].includes(w))) {
+    themes.push('sleep disturbances');
+  }
+  if ([...topWordSet].some(w => ['stomach', 'bloated', 'diarrhea', 'constipation'].includes(w))) {
+    themes.push('gastrointestinal issues');
+  }
+  if ([...topWordSet].some(w => ['dizzy', 'dizziness', 'numbness', 'tingling', 'headache'].includes(w))) {
+    themes.push('neurologic symptoms');
+  }
+  if ([...topWordSet].some(w => ['anxiety', 'anxious', 'stress', 'depression', 'depressed'].includes(w))) {
+    themes.push('mood symptoms');
+  }
+
+  // Fallback: keep topic distribution populated from strongest detected terms.
+  if (themes.length === 0) {
+    const fallbackThemes = (keywordAnalysis.top_keywords || [])
+      .slice(0, 3)
+      .map((k) => String(k.word || "").trim().toLowerCase())
+      .filter(Boolean);
+    themes.push(...fallbackThemes);
+  }
   
   // Severity assessment
   const severeWords = text.toLowerCase().match(/\b(severe|extreme|terrible|unbearable)\b/g);
