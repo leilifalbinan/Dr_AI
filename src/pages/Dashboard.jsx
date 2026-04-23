@@ -1,6 +1,6 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo } from "react";
 import { api } from "@/api/apiClient";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,11 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Users, FileText, Activity, Plus, AlertCircle, Brain } from "lucide-react";
 import { format, differenceInYears } from "date-fns";
 import { useAuth } from "@/contexts/AuthContext";
-import { compareAllModels, getConsensusResult } from "@/services/aiService";
 
 export default function Dashboard() {
   const { user } = useAuth();
-  const [demoRunStatus, setDemoRunStatus] = useState("idle");
 
   const { data: patients = [], isLoading: patientsLoading } = useQuery({
     queryKey: ['patients'],
@@ -55,63 +53,6 @@ export default function Dashboard() {
   const calculateAge = (dob) => {
     return differenceInYears(new Date(), new Date(dob));
   };
-
-  const runDemoReportAnalysisMutation = useMutation({
-    mutationFn: async () => {
-      const res = await fetch("http://localhost:5000/api/demo-report-derived");
-      if (!res.ok) throw new Error("DemoReport derived payload unavailable");
-      const payload = await res.json();
-      if (!payload?.ok) throw new Error(payload?.error || "DemoReport payload invalid");
-      if (!payload.visit_id || !payload.patient_id) {
-        throw new Error("DemoReport payload missing required visit_id/patient_id");
-      }
-
-      const visitData = {
-        id: payload.visit_id,
-        patient_id: payload.patient_id,
-        visit_date: new Date().toISOString().split("T")[0],
-        chief_complaint: payload.chief_complaint || "",
-        transcription: payload.transcription || "",
-        patient_name: payload.patient_name || "",
-        physician_notes: payload.doctor_notes || payload.physician_notes || "",
-        bp_systolic: payload.bp_systolic ?? null,
-        bp_diastolic: payload.bp_diastolic ?? null,
-        heart_rate: payload.heart_rate ?? null,
-        respiratory_rate: payload.respiratory_rate ?? null,
-        temperature: payload.temperature ?? null,
-        temperature_unit: payload.temperature_unit || "fahrenheit",
-        spo2: payload.spo2 ?? null,
-        height: payload.height ?? null,
-        weight: payload.weight ?? null,
-        bmi: payload.bmi ?? null,
-        keyword_analysis: payload.keyword_analysis,
-        sentiment_analysis: payload.sentiment_analysis,
-        semantic_analysis: payload.semantic_analysis,
-        multimodal_jsonl: payload.multimodal_jsonl || { face: [], audio: [], gait: [] },
-        gait_summary: payload.gait_summary || null,
-      };
-
-      const results = await compareAllModels(visitData, (model, status) => {
-        setDemoRunStatus(`${model}:${status}`);
-      });
-      const consensus = await getConsensusResult(results, visitData.transcription);
-      if (!consensus) throw new Error("No successful AI model output for DemoReport");
-
-      const savePayload = {
-        ...visitData,
-        keyword_analysis: consensus.keyword_analysis,
-        sentiment_analysis: consensus.sentiment_analysis,
-        semantic_analysis: consensus.semantic_analysis,
-        ai_assessment: consensus.ai_assessment,
-        ai_comparison: results,
-      };
-      await api.entities.Visit.create(savePayload);
-      return savePayload.id;
-    },
-    onMutate: () => setDemoRunStatus("starting"),
-    onSuccess: () => setDemoRunStatus("complete"),
-    onError: (e) => setDemoRunStatus(`error:${e?.message || "failed"}`),
-  });
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-teal-50 via-green-50 to-emerald-50 p-8">
@@ -200,34 +141,6 @@ export default function Dashboard() {
             </CardContent>
           </Card>
         </div>
-
-        <Card className="border-amber-200 bg-amber-50/60 mb-8">
-          <CardContent className="pt-6">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-              <div>
-                <h3 className="text-base font-semibold text-amber-900 mb-1">Temporary: Analyze DemoReport JSONL</h3>
-                <p className="text-sm text-amber-800">
-                  Generates Transcription/NLP + AI diagnostic from `runs/DemoReport` payload.
-                </p>
-                <p className="text-xs text-amber-700 mt-1 font-mono">status: {demoRunStatus}</p>
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  onClick={() => runDemoReportAnalysisMutation.mutate()}
-                  disabled={runDemoReportAnalysisMutation.isPending}
-                  className="bg-amber-600 hover:bg-amber-700 text-white"
-                >
-                  {runDemoReportAnalysisMutation.isPending ? "Analyzing..." : "Run DemoReport AI Analysis"}
-                </Button>
-                <Link to={createPageUrl("ReportSummary?visitId=demo-report-visit")}>
-                  <Button variant="outline" className="border-amber-300 text-amber-900 hover:bg-amber-100">
-                    Open DemoReport
-                  </Button>
-                </Link>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
 
         {/* Recent Visits */}
         <Card className="border-teal-200 bg-white/80 backdrop-blur">

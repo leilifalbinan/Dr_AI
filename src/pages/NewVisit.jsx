@@ -14,7 +14,6 @@ import { ArrowLeft, FileText, Brain, Loader2, UserPlus, CheckCircle, XCircle, Cl
 import { compareAllModels, getConsensusResult, analyzeKeywords, analyzeSentiment, analyzeSemantics, extractPatientText } from "@/services/aiService";
 import { transcriptionService } from "@/services/transcriptionService";
 import { AudioJsonlLogger, makeRelativeTimer, parsePatientSegments } from "@/utils/jsonlLogger";
-import { demoFace, demoAudio, demoGait } from "@/data/reportSummaryDemoData";
 
 const FLASK_URL = "http://localhost:5000"; //for facial analysis
 
@@ -68,6 +67,8 @@ export default function NewVisit() {
   const [manifestStatus, setManifestStatus] = useState({ audio: 'pending', face: 'pending', gait: 'pending' });
   const manifestPollRef = useRef(null);   // polling interval
   const activeVisitIdRef = useRef(null);  // visit ID being tracked
+  const workingVisitIdRef = useRef(null); // temp visit folder per New Visit session
+  const [activeCaptureVisitId, setActiveCaptureVisitId] = useState("");
   // Camera refs and state for dual feeds
   const video1Ref = useRef(null);
   const video2Ref = useRef(null);
@@ -111,6 +112,22 @@ export default function NewVisit() {
     enabled: !!selectedPatientId
   });
 
+  useEffect(() => {
+    workingVisitIdRef.current = null;
+    setActiveCaptureVisitId("");
+    activeVisitIdRef.current = null;
+  }, [selectedPatientId]);
+
+  const ensureWorkingVisitId = () => {
+    if (workingVisitIdRef.current) return workingVisitIdRef.current;
+    const uid =
+      (typeof crypto !== "undefined" && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : `visit-${Date.now()}`;
+    workingVisitIdRef.current = uid;
+    return uid;
+  };
+
   // Preconnect to transcription server so Start Recording is faster
   useEffect(() => {
     transcriptionService.connect().catch(() => {});
@@ -153,11 +170,11 @@ export default function NewVisit() {
           cancelAnimationFrame(animationRef.current);
         }
 
-        if (selectedPatientId && isFaceRunning) {
+        if (workingVisitIdRef.current && isFaceRunning) {
           fetch('http://localhost:5000/api/face/stop', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ visit_id: selectedPatientId })
+            body: JSON.stringify({ visit_id: workingVisitIdRef.current })
           }).catch(() => {});
         }
 
@@ -255,21 +272,23 @@ export default function NewVisit() {
 
   try {
     setFaceError(null);
+    const workingVisitId = ensureWorkingVisitId();
 
     // Ensure visit folder exists before launching face pipeline
-    await fetch(`http://localhost:5000/api/visits/${selectedPatientId}/create`, {
+    await fetch(`http://localhost:5000/api/visits/${workingVisitId}/create`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ patient_id: selectedPatientId })
     });
 
-    startManifestPolling(selectedPatientId);
+    startManifestPolling(workingVisitId);
+    setActiveCaptureVisitId(workingVisitId);
 
     const res = await fetch('http://localhost:5000/api/face/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        visit_id: selectedPatientId,
+        visit_id: workingVisitId,
         patient_id: selectedPatientId,
         camera_index: Number(cameraIndex),
       })
@@ -290,10 +309,12 @@ export default function NewVisit() {
 
 const handleStopFace = async () => {
   try {
+    const workingVisitId = workingVisitIdRef.current;
+    if (!workingVisitId) return;
     const res = await fetch('http://localhost:5000/api/face/stop', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ visit_id: selectedPatientId })
+      body: JSON.stringify({ visit_id: workingVisitId })
     });
 
     const data = await res.json();
@@ -433,11 +454,14 @@ const handleStopFace = async () => {
     },
     onSuccess: async (visit) => {
       try {
-        await fetch('http://localhost:5000/api/visits/rename', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ from: selectedPatientId, to: visit.id })
-        });
+        const fromVisitId = workingVisitIdRef.current;
+        if (fromVisitId) {
+          await fetch('http://localhost:5000/api/visits/rename', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ from: fromVisitId, to: visit.id, patient_id: selectedPatientId })
+          });
+        }
       } catch (err) {
         console.warn('Could not rename visit folder:', err.message);
       }
@@ -453,6 +477,8 @@ const handleStopFace = async () => {
       }
 
       stopManifestPolling();
+      workingVisitIdRef.current = null;
+      setActiveCaptureVisitId("");
       queryClient.invalidateQueries(['visits']);
       navigate(createPageUrl(`ReportSummary?visitId=${visit.id}`));
     },
@@ -473,8 +499,9 @@ const handleStopFace = async () => {
 
       // Initialize the JSONL logger for this recording session
       const t0 = Date.now();
+      const workingVisitId = ensureWorkingVisitId();
       jsonlLoggerRef.current = new AudioJsonlLogger({
-        visitId: selectedPatientId || `session_${t0}`,
+        visitId: workingVisitId || `session_${t0}`,
         patientId: selectedPatientId || 'unknown',
         t0,
       });
@@ -541,21 +568,18 @@ const handleStopFace = async () => {
   };
 
   const analyzeTranscription = async () => {
-    if (!visitData.transcription || !selectedPatientId) return;
-    
-    if (!visitData.bp_systolic || !visitData.bp_diastolic || !visitData.heart_rate) {
-      alert("Please enter required vital signs: Blood Pressure and Heart Rate");
-      return;
-    }
+    if (!selectedPatientId) return;
 
     // Create visit folder in Flask and start manifest polling
     try {
-      await fetch(`http://localhost:5000/api/visits/${selectedPatientId}/create`, {
+      const workingVisitId = ensureWorkingVisitId();
+      await fetch(`http://localhost:5000/api/visits/${workingVisitId}/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ patient_id: selectedPatientId })
       });
-      startManifestPolling(selectedPatientId);
+      startManifestPolling(workingVisitId);
+      setActiveCaptureVisitId(workingVisitId);
       setManifestStatus({ audio: 'pending', face: 'pending', gait: 'pending' });
     } catch (err) {
       console.warn('Flask offline, skipping visit folder creation:', err.message);
@@ -565,10 +589,43 @@ const handleStopFace = async () => {
     setAnalysisProgress({ openai: 'running', ollama: 'running' });
 
     try {
+      const patientOnlyTranscription =
+        extractPatientText(visitData.transcription || "").trim() || visitData.transcription;
+
+      const loadLiveMultimodal = async (visitFolderId) => {
+        try {
+          const res = await fetch(`http://localhost:5000/api/visits/${visitFolderId}/report`);
+          if (!res.ok) return { face: [], audio: [], gait: [] };
+          const report = await res.json();
+          const sections = report?.sections || {};
+          const normalizeRows = (section) => {
+            if (!section) return [];
+            const rows = [];
+            // Some sections (e.g., face) are returned as a direct summary object.
+            if (section.type) rows.push(section);
+            if (Array.isArray(section.windows)) rows.push(...section.windows);
+            if (Array.isArray(section.events)) rows.push(...section.events);
+            if (section.summary && typeof section.summary === "object") rows.push(section.summary);
+            return rows;
+          };
+          return {
+            face: normalizeRows(sections.face),
+            audio: normalizeRows(sections.audio),
+            gait: normalizeRows(sections.gait),
+          };
+        } catch {
+          return { face: [], audio: [], gait: [] };
+        }
+      };
+
+      const workingVisitId = ensureWorkingVisitId();
+      let liveMultimodal = await loadLiveMultimodal(workingVisitId);
+
       const results = await compareAllModels(
         {
           ...visitData,
-          multimodal_jsonl: { face: demoFace, audio: demoAudio, gait: demoGait },
+          transcription: patientOnlyTranscription,
+          multimodal_jsonl: liveMultimodal,
         },
         (model, status) => {
           console.log(`${model}: ${status}`);
@@ -576,7 +633,7 @@ const handleStopFace = async () => {
         }
       );
 
-      const consensus = await getConsensusResult(results, visitData.transcription);
+      const consensus = await getConsensusResult(results, patientOnlyTranscription);
 
       if (!consensus) {
         alert("All AI models failed. Please check your configuration and try again.");
@@ -608,7 +665,7 @@ const handleStopFace = async () => {
           // per timestamped patient segment (even if coarse live windows exist).
           const t0 = Date.now();
           jsonlLoggerRef.current = new AudioJsonlLogger({
-            visitId: selectedPatientId,
+            visitId: workingVisitId,
             patientId: selectedPatientId,
             t0,
           });
@@ -632,7 +689,7 @@ const handleStopFace = async () => {
           if (!jsonlLoggerRef.current) {
             const t0 = Date.now();
             jsonlLoggerRef.current = new AudioJsonlLogger({
-              visitId: selectedPatientId,
+              visitId: workingVisitId,
               patientId: selectedPatientId,
               t0,
             });
@@ -667,6 +724,9 @@ const handleStopFace = async () => {
         jsonlLoggerRef.current = null;
       }
 
+      // Reload report sections after any audio flush/integration side effects.
+      liveMultimodal = await loadLiveMultimodal(workingVisitId);
+
 
       const visitNumber = existingVisits.length + 1;
       
@@ -681,6 +741,7 @@ const handleStopFace = async () => {
         semantic_analysis: consensus.semantic_analysis,
         ai_assessment: consensus.ai_assessment,
         ai_comparison: results,
+        multimodal_jsonl: liveMultimodal,
         gait_summary: visitData.gait_summary,
         gait_summary_text: visitData.gait_summary_text,
         gait_overlay_video_url: visitData.gait_overlay_video_url
@@ -1049,7 +1110,7 @@ const handleStopFace = async () => {
                 <div className="relative bg-black rounded overflow-hidden" style={{ aspectRatio: '4/3' }}>
                   {isFaceRunning ? (
                     <img
-                      src={`${FLASK_URL}/api/face/live/${selectedPatientId}?t=${Date.now()}`}
+                      src={`${FLASK_URL}/api/face/live/${activeCaptureVisitId || selectedPatientId}?t=${Date.now()}`}
                       alt="Live facial analysis"
                       className="w-full h-full object-cover"
                     />
@@ -1105,7 +1166,7 @@ const handleStopFace = async () => {
           <CardContent className="space-y-5">
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <Label htmlFor="transcription" className="text-sm font-medium text-teal-900">Patient Transcription *</Label>
+                <Label htmlFor="transcription" className="text-sm font-medium text-teal-900">Patient Transcription</Label>
                 <div className="flex items-center gap-2">
                   {isStartingTranscription ? (
                     <Button
@@ -1213,7 +1274,7 @@ const handleStopFace = async () => {
                 className="min-h-[180px] font-mono text-sm"
               />
               <p className="text-xs text-teal-600">
-                ✓ Real-time transcription with speaker detection and timestamps
+                Optional: real-time transcription with speaker detection and timestamps
               </p>
               <p className="text-xs text-slate-500">
                 AI will analyze with OpenAI GPT-4 and Ollama Llama (if running)
@@ -1270,7 +1331,7 @@ const handleStopFace = async () => {
               </div>
               <Button
                 onClick={analyzeTranscription}
-                disabled={!selectedPatientId || !visitData.transcription || isAnalyzing}
+                disabled={!selectedPatientId || isAnalyzing}
                 className="bg-teal-600 hover:bg-teal-700"
               >
                 {isAnalyzing ? (

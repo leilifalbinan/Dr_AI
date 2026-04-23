@@ -621,7 +621,7 @@ def start_face_analysis():
             return jsonify({"error": f"Face analysis already running for visit {visit_id}"}), 400
         active_face_sessions.pop(visit_id, None)
 
-    visit_dir = RUNS_DIR / f"visit_{visit_id}"
+    visit_dir = _resolve_visit_dir(visit_id, patient_id=patient_id, create=True)
     visit_dir.mkdir(parents=True, exist_ok=True)
 
     manifest_path = visit_dir / "manifest.json"
@@ -652,7 +652,7 @@ def start_face_analysis():
                         visit_id=visit_id,
                         patient_id=patient_id,
                         visit_label=None,
-                        runs_dir=str(RUNS_DIR),
+                        runs_dir=str(visit_dir.parent),
                         camera_index=camera_index,
                         frame_callback=lambda frame: set_latest_face_frame(visit_id, frame),
                         stop_checker=lambda: stop_event.is_set(),
@@ -756,11 +756,124 @@ def face_live_stream(visit_id):
 
 #RUNS_DIR = Path("runs")
 RUNS_DIR = Path(__file__).resolve().parent.parent / "runs"
+
+
+def _safe_folder_name(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return "unknown"
+    return "".join(ch if (ch.isalnum() or ch in ("-", "_", ".")) else "_" for ch in raw)
+
+
+def _read_manifest_from_dir(visit_dir: Path):
+    manifest_path = visit_dir / "manifest.json"
+    if not manifest_path.exists():
+        return None
+    try:
+        return json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _patient_mrn(patient_id):
+    patients = _read_patients()
+    p = next((row for row in patients if str(row.get("id")) == str(patient_id)), None)
+    if not p:
+        return None
+    return p.get("medical_record_number") or None
+
+
+def _patient_runs_dir(patient_id):
+    mrn = _patient_mrn(patient_id)
+    if not mrn:
+        return None
+    return RUNS_DIR / _safe_folder_name(mrn)
+
+
+def _legacy_visit_dir(visit_id):
+    return RUNS_DIR / f"visit_{visit_id}"
+
+
+def _nested_visit_dir(visit_id, patient_id):
+    patient_dir = _patient_runs_dir(patient_id)
+    if not patient_dir:
+        return None
+    return patient_dir / f"visit_{visit_id}"
+
+
+def _iter_nested_visit_dirs(visit_id):
+    if not RUNS_DIR.exists():
+        return
+    for child in RUNS_DIR.iterdir():
+        if not child.is_dir():
+            continue
+        candidate = child / f"visit_{visit_id}"
+        if candidate.exists() and candidate.is_dir():
+            yield candidate
+
+
+def _find_existing_visit_dir(visit_id):
+    for d in _iter_nested_visit_dirs(visit_id):
+        return d
+    legacy = _legacy_visit_dir(visit_id)
+    if legacy.exists() and legacy.is_dir():
+        return legacy
+    return None
+
+
+def _resolve_visit_dir(visit_id, patient_id=None, create=False):
+    existing = _find_existing_visit_dir(visit_id)
+    if existing:
+        return existing
+
+    if patient_id:
+        nested = _nested_visit_dir(visit_id, patient_id)
+        if nested is not None:
+            if create:
+                nested.mkdir(parents=True, exist_ok=True)
+            return nested
+
+    legacy = _legacy_visit_dir(visit_id)
+    if create:
+        legacy.mkdir(parents=True, exist_ok=True)
+    return legacy
+
+
+def _migrate_runs_to_mrn_structure():
+    if not RUNS_DIR.exists():
+        return []
+    moves = []
+    for visit_dir in RUNS_DIR.iterdir():
+        if not visit_dir.is_dir() or not visit_dir.name.startswith("visit_"):
+            continue
+        visit_id = visit_dir.name[len("visit_"):]
+        meta = _read_json_file(visit_dir / "visit_metadata.json") or {}
+        manifest = _read_manifest_from_dir(visit_dir) or {}
+        patient_id = meta.get("patient_id") or manifest.get("patient_id")
+        if not patient_id:
+            continue
+        target_dir = _nested_visit_dir(visit_id, patient_id)
+        if target_dir is None:
+            continue
+        if target_dir == visit_dir:
+            continue
+        target_dir.parent.mkdir(parents=True, exist_ok=True)
+        if target_dir.exists():
+            for f in visit_dir.iterdir():
+                dest = target_dir / f.name
+                if not dest.exists():
+                    shutil.move(str(f), str(dest))
+            shutil.rmtree(visit_dir, ignore_errors=True)
+        else:
+            shutil.move(str(visit_dir), str(target_dir))
+        moves.append((str(visit_dir), str(target_dir)))
+    return moves
+
 @app.route('/api/visits/<visit_id>/create', methods=['POST'])
 def create_visit_folder(visit_id):
     data = request.get_json(silent=True) or {}
-    visit_dir = RUNS_DIR / f"visit_{visit_id}"
-    visit_dir.mkdir(parents=True, exist_ok=True)
+    patient_id = data.get("patient_id", "")
+    visit_dir = _resolve_visit_dir(visit_id, patient_id=patient_id, create=True)
 
     manifest_path = visit_dir / "manifest.json"
     if not manifest_path.exists():
@@ -781,8 +894,8 @@ def create_visit_folder(visit_id):
 
 @app.route('/api/visits/<visit_id>/logs/audio', methods=['POST'])
 def save_audio_log(visit_id):
-    visit_dir = RUNS_DIR / f"visit_{visit_id}"
-    visit_dir.mkdir(parents=True, exist_ok=True)
+    data = request.get_json(silent=True) or {}
+    visit_dir = _resolve_visit_dir(visit_id, patient_id=data.get("patient_id"), create=True)
     audio_path = visit_dir / "audio.jsonl"
 
     # Accept both JSONL (x-ndjson) and JSON array formats
@@ -823,7 +936,7 @@ def save_audio_log(visit_id):
         except Exception:
             pass
 
-    print(f"[Visit] Audio JSONL saved → {audio_path} ({len(records)} records)")
+    print(f"[Visit] Audio JSONL saved -> {audio_path} ({len(records)} records)")
     return jsonify({"status": "ok", "records": len(records)})
 
 
@@ -832,21 +945,26 @@ def rename_visit_folder():
     data = request.get_json(silent=True) or {}
     old_id = data.get("from")
     new_id = data.get("to")
+    patient_id = data.get("patient_id")
+    if not patient_id:
+        old_meta = _read_visit_metadata(old_id) or {}
+        old_manifest = _read_manifest_from_dir(_resolve_visit_dir(old_id, create=False)) or {}
+        patient_id = old_meta.get("patient_id") or old_manifest.get("patient_id")
     if not old_id or not new_id:
         return jsonify({"error": "missing from/to"}), 400
-    old_dir = RUNS_DIR / f"visit_{old_id}"
-    new_dir = RUNS_DIR / f"visit_{new_id}"
+    old_dir = _resolve_visit_dir(old_id, patient_id=patient_id, create=False)
+    new_dir = _resolve_visit_dir(new_id, patient_id=patient_id, create=True)
     if old_dir.exists():
         new_dir.mkdir(parents=True, exist_ok=True)
         for file in old_dir.iterdir():
             shutil.copy2(str(file), str(new_dir / file.name))
-        print(f"[Visit] Copied folder: {old_dir} → {new_dir}")
+        print(f"[Visit] Copied folder: {old_dir} -> {new_dir}")
     return jsonify({"status": "ok"})
 
 
 @app.route('/api/visits/<visit_id>/report', methods=['GET'])
 def get_report(visit_id):
-    visit_dir = RUNS_DIR / f"visit_{visit_id}"
+    visit_dir = _resolve_visit_dir(visit_id, create=False)
     report_path = visit_dir / "report.json"
     if report_path.exists():
         with open(report_path, "r", encoding="utf-8") as f:
@@ -890,7 +1008,7 @@ def get_report(visit_id):
 
 @app.route('/api/visits/<visit_id>/status', methods=['GET'])
 def get_visit_status(visit_id):
-    visit_dir = RUNS_DIR / f"visit_{visit_id}"
+    visit_dir = _resolve_visit_dir(visit_id, create=False)
     manifest_path = visit_dir / "manifest.json"
     if manifest_path.exists():
         with open(manifest_path, "r", encoding="utf-8") as f:
@@ -907,7 +1025,7 @@ def integrate_visit(visit_id):
     or manually triggered from VisitDetails.
     """
     import sys
-    visit_dir = RUNS_DIR / f"visit_{visit_id}"
+    visit_dir = _resolve_visit_dir(visit_id, create=False)
     if not visit_dir.exists():
         return jsonify({"error": "Visit folder not found"}), 404
 
@@ -1091,7 +1209,7 @@ def _write_patients(data):
 
 
 def _read_visit_metadata(visit_id):
-    path = RUNS_DIR / f"visit_{visit_id}" / "visit_metadata.json"
+    path = _resolve_visit_dir(visit_id, create=False) / "visit_metadata.json"
     if not path.exists():
         return None
     try:
@@ -1101,16 +1219,15 @@ def _read_visit_metadata(visit_id):
 
 
 def _write_visit_metadata(visit_id, data):
-    visit_dir = RUNS_DIR / f"visit_{visit_id}"
-    visit_dir.mkdir(parents=True, exist_ok=True)
+    visit_dir = _resolve_visit_dir(visit_id, patient_id=data.get("patient_id"), create=True)
     path = visit_dir / "visit_metadata.json"
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     _write_visit_transcription(visit_id, data.get("transcription"))
 
 
 def _write_visit_transcription(visit_id, transcription):
-    visit_dir = RUNS_DIR / f"visit_{visit_id}"
-    visit_dir.mkdir(parents=True, exist_ok=True)
+    existing = _resolve_visit_dir(visit_id, create=False)
+    visit_dir = existing if existing.exists() else _resolve_visit_dir(visit_id, create=True)
     tx_path = visit_dir / "transcription.txt"
     text = "" if transcription is None else str(transcription)
     tx_path.write_text(text, encoding="utf-8")
@@ -1121,31 +1238,13 @@ def _all_visits():
     results = []
     if not RUNS_DIR.exists():
         return results
-    for visit_dir in RUNS_DIR.iterdir():
-        if not visit_dir.is_dir() or not visit_dir.name.startswith("visit_"):
-            continue
-        meta_path = visit_dir / "visit_metadata.json"
+    for meta_path in RUNS_DIR.rglob("visit_metadata.json"):
         if meta_path.exists():
             try:
                 results.append(json.loads(meta_path.read_text(encoding="utf-8")))
             except Exception:
                 pass
     return results
-
-
-def _read_ndjson(path: Path):
-    rows = []
-    if not path.exists():
-        return rows
-    for line in path.read_text(encoding="utf-8").splitlines():
-        s = line.strip()
-        if not s:
-            continue
-        try:
-            rows.append(json.loads(s))
-        except Exception:
-            pass
-    return rows
 
 
 def _read_json_file(path: Path):
@@ -1155,340 +1254,6 @@ def _read_json_file(path: Path):
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return None
-
-
-def _safe_mean(values):
-    vals = [float(v) for v in values if v is not None]
-    return (sum(vals) / len(vals)) if vals else None
-
-
-def _clamp01(value):
-    return max(0.0, min(1.0, float(value)))
-
-
-def _score_from_range(value, good_max, poor_min):
-    """
-    Convert a raw metric where lower is better into 0..1.
-    - <= good_max: 1.0 (good)
-    - >= poor_min: 0.0 (poor)
-    - linear interpolation in between
-    """
-    if value is None:
-        return None
-    v = float(value)
-    if v <= good_max:
-        return 1.0
-    if v >= poor_min:
-        return 0.0
-    span = float(poor_min) - float(good_max)
-    if span <= 0:
-        return None
-    return _clamp01(1.0 - ((v - float(good_max)) / span))
-
-
-def _build_demo_report_package():
-    demo_dir = RUNS_DIR / "DemoReport"
-    if not demo_dir.exists():
-        return None
-
-    audio_rows = _read_ndjson(demo_dir / "audio.jsonl")
-    gait_rows = _read_ndjson(demo_dir / "gait_visit_20s.jsonl")
-    patient_details = _read_json_file(demo_dir / "patientdetails.json") or {}
-
-    face_file = None
-    for candidate in sorted(demo_dir.glob("face*.jsonl")):
-        face_file = candidate
-        break
-    face_rows = _read_ndjson(face_file) if face_file else []
-
-    # Audio rows are already in the report schema.
-    audio = audio_rows
-
-    # Face rows are already close to schema (summary-only in provided file).
-    face = face_rows
-
-    # Convert gait event stream -> report schema rows.
-    gait_frames = [r for r in gait_rows if r.get("event") == "gait_frame"]
-    gait_summary = next((r for r in gait_rows if r.get("event") == "gait_summary"), None)
-
-    speed_norm_vals = [fr.get("speed_norm") for fr in gait_frames if fr.get("speed_norm") is not None]
-    mean_speed_norm = _safe_mean(speed_norm_vals)
-    mean_speed_mps = gait_summary.get("mean_speed_mps") if gait_summary else None
-    speed_scale = None
-    if mean_speed_norm not in (None, 0) and mean_speed_mps is not None:
-        speed_scale = float(mean_speed_mps) / float(mean_speed_norm)
-
-    gait = []
-    for fr in gait_frames:
-        gait.append({
-            "visit_id": fr.get("visit_id", "visit_001"),
-            "patient_id": fr.get("patient_id", "DemoReport"),
-            "subsystem": "gait",
-            "phase": "entry",
-            "type": "window",
-            "t_start": fr.get("t_s"),
-            "t_end": fr.get("t_s"),
-            "features": {
-                # Calibrate normalized frame speed to m/s when summary mean exists.
-                # Falls back to raw normalized value when calibration is unavailable.
-                "speed_mps": (
-                    (float(fr.get("speed_norm")) * speed_scale)
-                    if (fr.get("speed_norm") is not None and speed_scale is not None)
-                    else fr.get("speed_norm")
-                ),
-                "speed_norm": fr.get("speed_norm"),
-                "symmetry": None,
-                # Stability score approximation: 1 - |sway|/peak, clipped to [0,1]
-                "stability": None,
-                "left_knee_deg": fr.get("left_knee_deg"),
-                "right_knee_deg": fr.get("right_knee_deg"),
-                "trunk_sway": fr.get("trunk_sway"),
-            },
-            "confidence": 1.0,
-            "valid": True,
-            "schema_version": "v0.1",
-        })
-
-    if gait_summary:
-        symmetry_idx = gait_summary.get("symmetry_index")
-        avg_symmetry_ratio = None
-        if symmetry_idx is not None:
-            # user-defined: symmetry_index is avg percent difference over recording
-            # convert to "higher is better" ratio expected by report charts.
-            avg_symmetry_ratio = max(0.0, min(1.0, 1.0 - (float(symmetry_idx) / 100.0)))
-
-        sway_vals = [abs(fr.get("trunk_sway")) for fr in gait_frames if fr.get("trunk_sway") is not None]
-
-        # Clinical-style stability scoring based on absolute trunk sway magnitudes.
-        # Lower sway => higher stability. Thresholds are conservative and intended
-        # for normalized/relative sway values in this pipeline.
-        frame_stabs = [
-            _score_from_range(v, good_max=0.015, poor_min=0.060)
-            for v in sway_vals
-            if v is not None
-        ]
-        frame_stabs = [s for s in frame_stabs if s is not None]
-
-        rms_stability = _score_from_range(gait_summary.get("trunk_sway_rms"), good_max=0.020, poor_min=0.060)
-        p2p_stability = _score_from_range(gait_summary.get("trunk_sway_peak_to_peak"), good_max=0.060, poor_min=0.180)
-        avg_stability = _safe_mean(frame_stabs)
-
-        # Prefer summary-level clinical indicators when present; blend with
-        # frame-derived score for smoother behavior.
-        summary_candidates = [s for s in [rms_stability, p2p_stability] if s is not None]
-        if summary_candidates:
-            summary_score = _safe_mean(summary_candidates)
-            if avg_stability is None:
-                avg_stability = summary_score
-            else:
-                avg_stability = (0.7 * summary_score) + (0.3 * avg_stability)
-
-        for row in gait:
-            sway = row["features"].get("trunk_sway")
-            if sway is not None:
-                row["features"]["stability"] = _score_from_range(abs(float(sway)), good_max=0.015, poor_min=0.060)
-
-        for row in gait:
-            row["features"]["symmetry"] = avg_symmetry_ratio
-
-        gait.append({
-            "visit_id": gait_summary.get("visit_id", "visit_001"),
-            "patient_id": gait_summary.get("patient_id", "DemoReport"),
-            "subsystem": "gait",
-            "phase": "entry",
-            "type": "summary",
-            "t_start": 0,
-            "t_end": max([fr.get("t_s", 0) for fr in gait_frames], default=0),
-            "features": {
-                "avg_speed_mps": gait_summary.get("mean_speed_mps"),
-                "avg_symmetry": avg_symmetry_ratio,
-                "avg_stability": avg_stability,
-                "cadence_spm": gait_summary.get("cadence_spm"),
-                "num_steps": gait_summary.get("num_steps"),
-                "symmetry_index": gait_summary.get("symmetry_index"),
-                "left_knee_mean": gait_summary.get("left_knee_mean"),
-                "right_knee_mean": gait_summary.get("right_knee_mean"),
-                "trunk_sway_rms": gait_summary.get("trunk_sway_rms"),
-                "trunk_sway_peak_to_peak": gait_summary.get("trunk_sway_peak_to_peak"),
-                "sit_to_stand_detected": gait_summary.get("sit_to_stand_detected"),
-                "quality_ok_fraction": gait_summary.get("quality_ok_fraction"),
-            },
-            "confidence": gait_summary.get("quality_ok_fraction", 1.0),
-            "valid": True,
-            "schema_version": "v0.1",
-            "notes": (
-                f"Symmetry ratio derived from symmetry_index ({gait_summary.get('symmetry_index')}%). "
-                + (
-                    "Frame speed converted from speed_norm to m/s using summary calibration."
-                    if speed_scale is not None
-                    else "Frame speed uses source speed_norm (relative scale); no m/s calibration available."
-                )
-            ),
-        })
-
-    return {
-        "ok": True,
-        "source": str(demo_dir),
-        "face": face,
-        "audio": audio,
-        "gait": gait,
-        "patient_details": patient_details,
-        "wip": [
-            "Face file currently contains summary-only rows (no per-window emotion timeline).",
-            "Gait window speed uses speed_norm from source and may not be physical m/s.",
-            "Gait stability is approximated from trunk sway magnitude normalization.",
-        ],
-    }
-
-
-def _build_demo_report_derived():
-    pkg = _build_demo_report_package()
-    if not pkg:
-        return None
-
-    audio = pkg.get("audio", [])
-    gait = pkg.get("gait", [])
-    face = pkg.get("face", [])
-    patient_details = pkg.get("patient_details", {}) or {}
-
-    audio_windows = [r for r in audio if r.get("type") == "window"]
-    audio_summary = next((r for r in audio if r.get("type") == "summary"), None)
-    gait_summary = next((r for r in gait if r.get("type") == "summary"), None)
-    face_summary = next((r for r in face if r.get("type") == "summary"), None)
-
-    demo_transcription_path = RUNS_DIR / "DemoReport" / "transcription.txt"
-    if demo_transcription_path.exists():
-        transcription = demo_transcription_path.read_text(encoding="utf-8").strip()
-    else:
-        # Fallback: build transcription-like text directly from detected window features.
-        lines = []
-        for w in audio_windows:
-            t0 = int(round(w.get("t_start", 0)))
-            t1 = int(round(w.get("t_end", t0)))
-            top_words = [word for word, _count in (w.get("features", {}).get("top_words", []) or [])]
-            polarity = (w.get("features", {}).get("sentiment", {}) or {}).get("polarity", 0)
-            sentiment_label = "negative" if polarity < 0 else ("positive" if polarity > 0 else "neutral")
-            if top_words:
-                lines.append(f"[{t0}s-{t1}s] Patient: terms detected ({', '.join(top_words)}); sentiment {sentiment_label}.")
-            else:
-                lines.append(f"[{t0}s-{t1}s] Patient: speech captured; sentiment {sentiment_label}.")
-        transcription = "\n".join(lines).strip()
-
-    # Keyword analysis from aggregated top words and diagnostic matches in source windows.
-    total_words = int(sum((w.get("features", {}).get("word_count", 0) or 0) for w in audio_windows))
-    word_counts = {}
-    diag_counts = {}
-    for w in audio_windows:
-        for word, count in (w.get("features", {}).get("top_words", []) or []):
-            word_counts[word] = word_counts.get(word, 0) + int(count)
-        for word, count in ((w.get("features", {}).get("diagnostic_terms", {}) or {}).get("matches", []) or []):
-            diag_counts[word] = diag_counts.get(word, 0) + int(count)
-
-    keyword_count = sum(diag_counts.values())
-    kw_pct = round((keyword_count / total_words) * 100, 1) if total_words > 0 else 0.0
-    top_keywords = [
-        {"word": w, "count": c, "category": "DERIVED"}
-        for w, c in sorted(word_counts.items(), key=lambda x: x[1], reverse=True)[:10]
-    ]
-    keyword_analysis = {
-        "total_words": total_words,
-        "diagnostic_keywords": {w: {"count": c, "category": "DERIVED"} for w, c in diag_counts.items()},
-        "keyword_percentage": kw_pct,
-        "top_keywords": top_keywords,
-        "inter_word_frequency": {},
-    }
-
-    # Sentiment from audio summary, falling back to mean window polarity.
-    summary_pol = None
-    if audio_summary:
-        summary_pol = (audio_summary.get("features", {}) or {}).get("avg_sentiment_polarity")
-    if summary_pol is None:
-        pols = [
-            (w.get("features", {}).get("sentiment", {}) or {}).get("polarity")
-            for w in audio_windows
-            if (w.get("features", {}).get("sentiment", {}) or {}).get("polarity") is not None
-        ]
-        summary_pol = _safe_mean(pols)
-    summary_pol = float(summary_pol) if summary_pol is not None else 0.0
-    sentiment_analysis = {
-        "overall_sentiment": "negative" if summary_pol < 0 else ("positive" if summary_pol > 0 else "neutral"),
-        "sentiment_score": round(summary_pol, 3),
-        "distress_level": "high" if summary_pol <= -0.7 else ("medium" if summary_pol < -0.25 else "low"),
-        "emotional_indicators": list(diag_counts.keys())[:5],
-        "analysis_type": "demo_report_jsonl_derived",
-    }
-
-    # Semantic themes from topics + gait + face summaries.
-    topic_rows = (audio_summary or {}).get("features", {}).get("top_topics", []) or []
-    themes = [str(t[0]).replace("_", " ") for t in topic_rows[:5] if isinstance(t, list) and t]
-    if gait_summary:
-        themes.append("gait impairment")
-    if face_summary:
-        themes.append("facial affect profile")
-    semantic_analysis = {
-        "key_themes": list(dict.fromkeys(themes))[:6],
-        "symptom_severity": "moderate",
-        "functional_impact": "moderate",
-        "temporal_patterns": "windowed over visit",
-    }
-
-    physician_notes_parts = []
-    if gait_summary:
-        gs = gait_summary.get("features", {}) or {}
-        physician_notes_parts.append(
-            f"Gait summary: speed {gs.get('avg_speed_mps')} m/s, cadence {gs.get('cadence_spm')} spm, "
-            f"symmetry index {gs.get('symmetry_index')}%, sway RMS {gs.get('trunk_sway_rms')}."
-        )
-    if face_summary:
-        emotion_pct = (face_summary.get("features", {}) or {}).get("emotion_pct", {}) or {}
-        top_emo = sorted(emotion_pct.items(), key=lambda x: x[1], reverse=True)[:2]
-        if top_emo:
-            physician_notes_parts.append("Face summary: " + ", ".join([f"{k} {v}%" for k, v in top_emo]))
-    physician_notes = " ".join(physician_notes_parts).strip()
-    doctor_notes = (
-        patient_details.get("doctor_notes")
-        or patient_details.get("physician_notes")
-        or physician_notes
-    )
-
-    details_patient_id = patient_details.get("patient_id")
-    details_visit_id = patient_details.get("visit_id")
-    details_patient_name = patient_details.get("patient_name")
-
-    details_vitals = {
-        "bp_systolic": patient_details.get("bp_systolic"),
-        "bp_diastolic": patient_details.get("bp_diastolic"),
-        "heart_rate": patient_details.get("heart_rate"),
-        "respiratory_rate": patient_details.get("respiratory_rate"),
-        "temperature": patient_details.get("temperature"),
-        "temperature_unit": patient_details.get("temperature_unit"),
-        "spo2": patient_details.get("spo2"),
-        "height": patient_details.get("height"),
-        "weight": patient_details.get("weight"),
-        "bmi": patient_details.get("bmi"),
-    }
-
-    return {
-        "ok": True,
-        "visit_id": details_visit_id or "demo-report-visit",
-        "patient_id": details_patient_id or "demo-report-patient",
-        "patient_name": details_patient_name,
-        "chief_complaint": patient_details.get("chief_complaint") or "DemoReport multimodal review",
-        "transcription": transcription,
-        "keyword_analysis": keyword_analysis,
-        "sentiment_analysis": sentiment_analysis,
-        "semantic_analysis": semantic_analysis,
-        "physician_notes": doctor_notes,
-        "doctor_notes": doctor_notes,
-        **details_vitals,
-        "patient_details": {
-            **patient_details,
-            "doctor_notes": doctor_notes,
-            **details_vitals,
-        },
-        "multimodal_jsonl": {"face": face, "audio": audio, "gait": gait},
-        "gait_summary": gait_summary.get("features", {}) if gait_summary else None,
-    }
 
 
 # ── Demo seed ─────────────────────────────────────────────────────────────────
@@ -1566,7 +1331,8 @@ def seed_demo_data():
         _write_visit_metadata(demo_visit_id, demo_visit)
 
         # Also create manifest for demo visit
-        demo_manifest_path = RUNS_DIR / f"visit_{demo_visit_id}" / "manifest.json"
+        demo_visit_dir = _resolve_visit_dir(demo_visit_id, patient_id="patient-demo-2", create=True)
+        demo_manifest_path = demo_visit_dir / "manifest.json"
         if not demo_manifest_path.exists():
             demo_manifest = {
                 "schema_version": "v0.1",
@@ -1640,7 +1406,7 @@ def delete_patient(patient_id):
 
     deleted_visit_dirs = []
     if RUNS_DIR.exists():
-        for visit_dir in RUNS_DIR.iterdir():
+        for visit_dir in RUNS_DIR.rglob("visit_*"):
             if not visit_dir.is_dir() or not visit_dir.name.startswith("visit_"):
                 continue
 
@@ -1675,6 +1441,13 @@ def delete_patient(patient_id):
                 shutil.rmtree(visit_dir, ignore_errors=True)
                 deleted_visit_dirs.append(visit_dir.name)
 
+        for d in RUNS_DIR.iterdir():
+            if d.is_dir():
+                try:
+                    next(d.iterdir())
+                except StopIteration:
+                    d.rmdir()
+
     _write_patients(new_list)
     print(f"[Patient] Deleted: {patient_id} (removed visit dirs: {deleted_visit_dirs})")
     return jsonify({"success": True, "deleted_visit_dirs": deleted_visit_dirs})
@@ -1704,7 +1477,7 @@ def create_visit():
     _write_visit_metadata(visit_id, visit_metadata)
 
     # Create manifest.json for the subsystem pipeline
-    visit_dir = RUNS_DIR / f"visit_{visit_id}"
+    visit_dir = _resolve_visit_dir(visit_id, patient_id=data.get("patient_id"), create=True)
     manifest_path = visit_dir / "manifest.json"
     if not manifest_path.exists():
         manifest = {
@@ -1749,26 +1522,10 @@ def delete_visit(visit_id):
     meta = _read_visit_metadata(visit_id)
     if not meta:
         return jsonify({"error": "Visit not found"}), 404
-    visit_dir = RUNS_DIR / f"visit_{visit_id}"
+    visit_dir = _resolve_visit_dir(visit_id, patient_id=meta.get("patient_id"), create=False)
     shutil.rmtree(visit_dir, ignore_errors=True)
     print(f"[Visit] Deleted: visit_{visit_id}")
     return jsonify({"success": True})
-
-
-@app.route('/api/demo-report-package', methods=['GET'])
-def demo_report_package():
-    pkg = _build_demo_report_package()
-    if not pkg:
-        return jsonify({"ok": False, "error": "runs/DemoReport not found"}), 404
-    return jsonify(pkg)
-
-
-@app.route('/api/demo-report-derived', methods=['GET'])
-def demo_report_derived():
-    payload = _build_demo_report_derived()
-    if not payload:
-        return jsonify({"ok": False, "error": "runs/DemoReport not found"}), 404
-    return jsonify(payload)
 
 
 # ── Dev utility ───────────────────────────────────────────────────────────────
@@ -1779,15 +1536,19 @@ def dev_clear():
     if PATIENTS_FILE.exists():
         PATIENTS_FILE.unlink()
     if RUNS_DIR.exists():
-        for visit_dir in RUNS_DIR.iterdir():
-            meta = visit_dir / "visit_metadata.json"
-            if meta.exists():
+        for meta in RUNS_DIR.rglob("visit_metadata.json"):
+            try:
                 meta.unlink()
+            except Exception:
+                pass
     seed_demo_data()
     return jsonify({"status": "cleared and reseeded"})
 if __name__ == '__main__':
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     seed_demo_data()
+    moved = _migrate_runs_to_mrn_structure()
+    if moved:
+        print(f"[Migration] Moved {len(moved)} visit folder(s) to MRN structure")
     print("Starting transcription server on http://localhost:5000")
     print(f"Visit artifacts will be saved to: {RUNS_DIR.resolve()}")
     socketio.run(app, host='0.0.0.0', port=5000, debug=True, allow_unsafe_werkzeug=True)

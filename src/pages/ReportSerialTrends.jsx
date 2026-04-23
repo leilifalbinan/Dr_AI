@@ -66,6 +66,12 @@ export default function ReportSerialTrends() {
     if (isPreviousReportVisual) {
       return demoSerialVisitSnapshots;
     }
+    const toNumOrNull = (value) => {
+      if (value == null) return null;
+      if (typeof value === "string" && value.trim() === "") return null;
+      const n = Number(value);
+      return Number.isFinite(n) ? n : null;
+    };
     const faceMetricsFromVisit = (v) => {
       const faceRows = Array.isArray(v?.multimodal_jsonl?.face) ? v.multimodal_jsonl.face : [];
       if (!faceRows.length) {
@@ -133,13 +139,16 @@ export default function ReportSerialTrends() {
       return idx + 1;
     };
     const sentimentScoreOf = (v) => {
-      if (v?.sentiment_score != null) return Number(v.sentiment_score);
-      if (v?.sentiment_analysis?.sentiment_score != null) return Number(v.sentiment_analysis.sentiment_score);
+      if (v?.sentiment_score != null) return toNumOrNull(v.sentiment_score);
+      if (v?.sentiment_analysis?.sentiment_score != null) return toNumOrNull(v.sentiment_analysis.sentiment_score);
       return null;
     };
     const diagnosticPctOf = (v) => {
-      if (v?.audio_diagnostic_term_pct != null) return Number(v.audio_diagnostic_term_pct);
-      if (v?.keyword_analysis?.keyword_percentage != null) return Number(v.keyword_analysis.keyword_percentage) / 100;
+      if (v?.audio_diagnostic_term_pct != null) return toNumOrNull(v.audio_diagnostic_term_pct);
+      if (v?.keyword_analysis?.keyword_percentage != null) {
+        const pct = toNumOrNull(v.keyword_analysis.keyword_percentage);
+        return pct != null ? pct / 100 : null;
+      }
       return null;
     };
     const keywordHitsOf = (v) => {
@@ -151,32 +160,32 @@ export default function ReportSerialTrends() {
       return null;
     };
     const wordCountOf = (v) => {
-      if (v?.audio_word_count != null) return Number(v.audio_word_count);
-      if (v?.keyword_analysis?.total_words != null) return Number(v.keyword_analysis.total_words);
+      if (v?.audio_word_count != null) return toNumOrNull(v.audio_word_count);
+      if (v?.keyword_analysis?.total_words != null) return toNumOrNull(v.keyword_analysis.total_words);
       return null;
     };
     const gaitSpeedOf = (v) => {
-      if (v?.gait_avg_speed_mps != null) return Number(v.gait_avg_speed_mps);
-      if (v?.gait_summary?.avg_speed_mps != null) return Number(v.gait_summary.avg_speed_mps);
-      if (v?.gait_summary?.mean_speed_mps != null) return Number(v.gait_summary.mean_speed_mps);
+      if (v?.gait_avg_speed_mps != null) return toNumOrNull(v.gait_avg_speed_mps);
+      if (v?.gait_summary?.avg_speed_mps != null) return toNumOrNull(v.gait_summary.avg_speed_mps);
+      if (v?.gait_summary?.mean_speed_mps != null) return toNumOrNull(v.gait_summary.mean_speed_mps);
       return null;
     };
     const gaitSymOf = (v) => {
-      if (v?.gait_avg_symmetry != null) return Number(v.gait_avg_symmetry);
-      if (v?.gait_summary?.avg_symmetry != null) return Number(v.gait_summary.avg_symmetry);
+      if (v?.gait_avg_symmetry != null) return toNumOrNull(v.gait_avg_symmetry);
+      if (v?.gait_summary?.avg_symmetry != null) return toNumOrNull(v.gait_summary.avg_symmetry);
       if (v?.gait_summary?.knee_symmetry_index_percent != null) {
-        const idxPct = Number(v.gait_summary.knee_symmetry_index_percent);
+        const idxPct = toNumOrNull(v.gait_summary.knee_symmetry_index_percent);
         return Number.isFinite(idxPct) ? Math.max(0, Math.min(1, 1 - idxPct / 100)) : null;
       }
       return null;
     };
     const gaitStabOf = (v) => {
-      if (v?.gait_avg_stability != null) return Number(v.gait_avg_stability);
-      if (v?.gait_summary?.avg_stability != null) return Number(v.gait_summary.avg_stability);
+      if (v?.gait_avg_stability != null) return toNumOrNull(v.gait_avg_stability);
+      if (v?.gait_summary?.avg_stability != null) return toNumOrNull(v.gait_summary.avg_stability);
       return null;
     };
     const gaitEventsOf = (v) => {
-      if (v?.gait_event_count != null) return Number(v.gait_event_count);
+      if (v?.gait_event_count != null) return toNumOrNull(v.gait_event_count);
       return null;
     };
 
@@ -186,18 +195,21 @@ export default function ReportSerialTrends() {
       visit_number: normVisitNumber(v, idx),
       visit_date: v.visit_date,
       chief_complaint: v.chief_complaint,
-      bp_systolic: v.bp_systolic != null ? Number(v.bp_systolic) : null,
-      bp_diastolic: v.bp_diastolic != null ? Number(v.bp_diastolic) : null,
-      heart_rate: v.heart_rate != null ? Number(v.heart_rate) : null,
-      respiratory_rate: v.respiratory_rate != null ? Number(v.respiratory_rate) : null,
-      temperature: v.temperature != null ? Number(v.temperature) : null,
+      bp_systolic: toNumOrNull(v.bp_systolic),
+      bp_diastolic: toNumOrNull(v.bp_diastolic),
+      heart_rate: toNumOrNull(v.heart_rate),
+      respiratory_rate: toNumOrNull(v.respiratory_rate),
+      temperature: toNumOrNull(v.temperature),
       temperature_unit: v.temperature_unit || "fahrenheit",
-      spo2: v.spo2 != null ? Number(v.spo2) : null,
-      height: v.height != null ? Number(v.height) : null,
-      weight: v.weight != null ? Number(v.weight) : null,
-      bmi: v.bmi != null ? Number(v.bmi) : null,
+      spo2: toNumOrNull(v.spo2),
+      height: toNumOrNull(v.height),
+      weight: toNumOrNull(v.weight),
+      bmi: toNumOrNull(v.bmi),
       sentiment_score: sentimentScoreOf(v),
-      audio_polarity: v?.sentiment_analysis?.sentiment_score != null ? Number(v.sentiment_analysis.sentiment_score) : sentimentScoreOf(v),
+      audio_polarity:
+        v?.sentiment_analysis?.sentiment_score != null
+          ? toNumOrNull(v.sentiment_analysis.sentiment_score)
+          : sentimentScoreOf(v),
       audio_diagnostic_term_pct: diagnosticPctOf(v),
       audio_keyword_hits: keywordHitsOf(v),
       audio_word_count: wordCountOf(v),
@@ -215,6 +227,13 @@ export default function ReportSerialTrends() {
     }
     return trendPatient ? `${trendPatient.first_name} ${trendPatient.last_name}`.trim() : null;
   }, [isPreviousReportVisual, patientId, trendPatient]);
+
+  const patientMrnLabel = useMemo(() => {
+    const mrn = trendPatient?.medical_record_number;
+    if (typeof mrn === "string" && mrn.trim()) return mrn.trim();
+    if (mrn != null && String(mrn).trim()) return String(mrn).trim();
+    return patientId;
+  }, [trendPatient, patientId]);
 
   const labels = useMemo(
     () => snaps.map((s) => format(new Date(s.visit_date), "MMM d, yy")),
@@ -452,7 +471,9 @@ export default function ReportSerialTrends() {
         },
         {
           label: "Diagnostic term %",
-          data: snaps.map((s) => (s.audio_diagnostic_term_pct ?? 0) * 100),
+          data: snaps.map((s) =>
+            s.audio_diagnostic_term_pct != null ? s.audio_diagnostic_term_pct * 100 : null
+          ),
           borderColor: "#7c3aed",
           backgroundColor: "rgba(124,58,237,0.08)",
           yAxisID: "yPct",
@@ -606,7 +627,7 @@ export default function ReportSerialTrends() {
                       <span className="text-teal-600"> · </span>
                     </>
                   ) : null}
-                  Multimodal serial trends · <span className="font-mono">{patientId}</span>
+                  Multimodal serial trends · MRN <span className="font-mono">{patientMrnLabel}</span>
                 </p>
               </div>
             </div>

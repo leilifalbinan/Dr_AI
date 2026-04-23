@@ -43,7 +43,7 @@ export function parsePatientSegments(transcription) {
 
   const segments = [];
   // With timestamp: [HH:MM:SS → HH:MM:SS] Patient: text  or  [H:M:S → H:M:S] Mic 1: text
-  const timestampedRe = /\[\s*([^\s\]]+)\s*→\s*([^\]\s]+)\s*\]\s*(Patient|Mic\s*1)\s*:\s*(.*)/i;
+  const timestampedRe = /\[\s*([^\s\]]+)\s*(?:→|->)\s*([^\]\s]+)\s*\]\s*(Patient|Mic\s*1)\s*:\s*(.*)/i;
   // No timestamp: Patient: text  or  Mic 1: text
   const plainRe = /^(Patient|Mic\s*1)\s*:\s*(.*)/i;
 
@@ -125,17 +125,18 @@ function mapTopics(semanticAnalysis) {
   const topics = [];
 
   if (semanticAnalysis.key_themes?.length) {
-    semanticAnalysis.key_themes.forEach((theme) => {
-      topics.push([theme.toLowerCase().replace(/\s+/g, '_'), 0.7]);
+    const uniqueThemes = Array.from(
+      new Set(
+        semanticAnalysis.key_themes
+          .map((theme) => String(theme || "").toLowerCase().trim())
+          .filter(Boolean)
+      )
+    );
+    uniqueThemes.forEach((theme, idx) => {
+      // Decay topic weight by rank to avoid flat percentages.
+      const weight = Math.max(0.45, 0.85 - idx * 0.12);
+      topics.push([theme.replace(/\s+/g, '_'), Number(weight.toFixed(3))]);
     });
-  }
-
-  if (semanticAnalysis.temporal_patterns) {
-    topics.push([`temporal_${semanticAnalysis.temporal_patterns}`, 0.6]);
-  }
-
-  if (semanticAnalysis.symptom_severity && semanticAnalysis.symptom_severity !== 'moderate') {
-    topics.push([`severity_${semanticAnalysis.symptom_severity}`, 0.65]);
   }
 
   return topics.slice(0, 5); // cap at 5 topics
