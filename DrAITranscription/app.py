@@ -1105,6 +1105,15 @@ def _write_visit_metadata(visit_id, data):
     visit_dir.mkdir(parents=True, exist_ok=True)
     path = visit_dir / "visit_metadata.json"
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    _write_visit_transcription(visit_id, data.get("transcription"))
+
+
+def _write_visit_transcription(visit_id, transcription):
+    visit_dir = RUNS_DIR / f"visit_{visit_id}"
+    visit_dir.mkdir(parents=True, exist_ok=True)
+    tx_path = visit_dir / "transcription.txt"
+    text = "" if transcription is None else str(transcription)
+    tx_path.write_text(text, encoding="utf-8")
 
 
 def _all_visits():
@@ -1122,6 +1131,261 @@ def _all_visits():
             except Exception:
                 pass
     return results
+
+
+def _read_ndjson(path: Path):
+    rows = []
+    if not path.exists():
+        return rows
+    for line in path.read_text(encoding="utf-8").splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        try:
+            rows.append(json.loads(s))
+        except Exception:
+            pass
+    return rows
+
+
+def _safe_mean(values):
+    vals = [float(v) for v in values if v is not None]
+    return (sum(vals) / len(vals)) if vals else None
+
+
+def _build_demo_report_package():
+    demo_dir = RUNS_DIR / "DemoReport"
+    if not demo_dir.exists():
+        return None
+
+    audio_rows = _read_ndjson(demo_dir / "audio.jsonl")
+    gait_rows = _read_ndjson(demo_dir / "gait_visit_20s.jsonl")
+
+    face_file = None
+    for candidate in sorted(demo_dir.glob("face*.jsonl")):
+        face_file = candidate
+        break
+    face_rows = _read_ndjson(face_file) if face_file else []
+
+    # Audio rows are already in the report schema.
+    audio = audio_rows
+
+    # Face rows are already close to schema (summary-only in provided file).
+    face = face_rows
+
+    # Convert gait event stream -> report schema rows.
+    gait_frames = [r for r in gait_rows if r.get("event") == "gait_frame"]
+    gait_summary = next((r for r in gait_rows if r.get("event") == "gait_summary"), None)
+
+    gait = []
+    for fr in gait_frames:
+        gait.append({
+            "visit_id": fr.get("visit_id", "visit_001"),
+            "patient_id": fr.get("patient_id", "DemoReport"),
+            "subsystem": "gait",
+            "phase": "entry",
+            "type": "window",
+            "t_start": fr.get("t_s"),
+            "t_end": fr.get("t_s"),
+            "features": {
+                # speed_norm is preserved as source field; report treats this as relative speed.
+                "speed_mps": fr.get("speed_norm"),
+                "symmetry": None,
+                # Stability score approximation: 1 - |sway|/peak, clipped to [0,1]
+                "stability": None,
+                "left_knee_deg": fr.get("left_knee_deg"),
+                "right_knee_deg": fr.get("right_knee_deg"),
+                "trunk_sway": fr.get("trunk_sway"),
+            },
+            "confidence": 1.0,
+            "valid": True,
+            "schema_version": "v0.1",
+        })
+
+    if gait_summary:
+        symmetry_idx = gait_summary.get("symmetry_index")
+        avg_symmetry_ratio = None
+        if symmetry_idx is not None:
+            # user-defined: symmetry_index is avg percent difference over recording
+            # convert to "higher is better" ratio expected by report charts.
+            avg_symmetry_ratio = max(0.0, min(1.0, 1.0 - (float(symmetry_idx) / 100.0)))
+
+        sway_vals = [abs(fr.get("trunk_sway")) for fr in gait_frames if fr.get("trunk_sway") is not None]
+        sway_peak = max(sway_vals) if sway_vals else None
+        avg_stability = None
+        if sway_peak and sway_peak > 0:
+            stabs = [max(0.0, min(1.0, 1.0 - (v / sway_peak))) for v in sway_vals]
+            avg_stability = _safe_mean(stabs)
+            for row in gait:
+                sway = row["features"].get("trunk_sway")
+                if sway is not None:
+                    row["features"]["stability"] = max(0.0, min(1.0, 1.0 - (abs(float(sway)) / sway_peak)))
+
+        for row in gait:
+            row["features"]["symmetry"] = avg_symmetry_ratio
+
+        gait.append({
+            "visit_id": gait_summary.get("visit_id", "visit_001"),
+            "patient_id": gait_summary.get("patient_id", "DemoReport"),
+            "subsystem": "gait",
+            "phase": "entry",
+            "type": "summary",
+            "t_start": 0,
+            "t_end": max([fr.get("t_s", 0) for fr in gait_frames], default=0),
+            "features": {
+                "avg_speed_mps": gait_summary.get("mean_speed_mps"),
+                "avg_symmetry": avg_symmetry_ratio,
+                "avg_stability": avg_stability,
+                "cadence_spm": gait_summary.get("cadence_spm"),
+                "num_steps": gait_summary.get("num_steps"),
+                "symmetry_index": gait_summary.get("symmetry_index"),
+                "left_knee_mean": gait_summary.get("left_knee_mean"),
+                "right_knee_mean": gait_summary.get("right_knee_mean"),
+                "trunk_sway_rms": gait_summary.get("trunk_sway_rms"),
+                "trunk_sway_peak_to_peak": gait_summary.get("trunk_sway_peak_to_peak"),
+                "sit_to_stand_detected": gait_summary.get("sit_to_stand_detected"),
+                "quality_ok_fraction": gait_summary.get("quality_ok_fraction"),
+            },
+            "confidence": gait_summary.get("quality_ok_fraction", 1.0),
+            "valid": True,
+            "schema_version": "v0.1",
+            "notes": (
+                f"Symmetry ratio derived from symmetry_index ({gait_summary.get('symmetry_index')}%). "
+                "Speed windows use source speed_norm (relative scale)."
+            ),
+        })
+
+    return {
+        "ok": True,
+        "source": str(demo_dir),
+        "face": face,
+        "audio": audio,
+        "gait": gait,
+        "wip": [
+            "Face file currently contains summary-only rows (no per-window emotion timeline).",
+            "Gait window speed uses speed_norm from source and may not be physical m/s.",
+            "Gait stability is approximated from trunk sway magnitude normalization.",
+        ],
+    }
+
+
+def _build_demo_report_derived():
+    pkg = _build_demo_report_package()
+    if not pkg:
+        return None
+
+    audio = pkg.get("audio", [])
+    gait = pkg.get("gait", [])
+    face = pkg.get("face", [])
+
+    audio_windows = [r for r in audio if r.get("type") == "window"]
+    audio_summary = next((r for r in audio if r.get("type") == "summary"), None)
+    gait_summary = next((r for r in gait if r.get("type") == "summary"), None)
+    face_summary = next((r for r in face if r.get("type") == "summary"), None)
+
+    demo_transcription_path = RUNS_DIR / "DemoReport" / "transcription.txt"
+    if demo_transcription_path.exists():
+        transcription = demo_transcription_path.read_text(encoding="utf-8").strip()
+    else:
+        # Fallback: build transcription-like text directly from detected window features.
+        lines = []
+        for w in audio_windows:
+            t0 = int(round(w.get("t_start", 0)))
+            t1 = int(round(w.get("t_end", t0)))
+            top_words = [word for word, _count in (w.get("features", {}).get("top_words", []) or [])]
+            polarity = (w.get("features", {}).get("sentiment", {}) or {}).get("polarity", 0)
+            sentiment_label = "negative" if polarity < 0 else ("positive" if polarity > 0 else "neutral")
+            if top_words:
+                lines.append(f"[{t0}s-{t1}s] Patient: terms detected ({', '.join(top_words)}); sentiment {sentiment_label}.")
+            else:
+                lines.append(f"[{t0}s-{t1}s] Patient: speech captured; sentiment {sentiment_label}.")
+        transcription = "\n".join(lines).strip()
+
+    # Keyword analysis from aggregated top words and diagnostic matches in source windows.
+    total_words = int(sum((w.get("features", {}).get("word_count", 0) or 0) for w in audio_windows))
+    word_counts = {}
+    diag_counts = {}
+    for w in audio_windows:
+        for word, count in (w.get("features", {}).get("top_words", []) or []):
+            word_counts[word] = word_counts.get(word, 0) + int(count)
+        for word, count in ((w.get("features", {}).get("diagnostic_terms", {}) or {}).get("matches", []) or []):
+            diag_counts[word] = diag_counts.get(word, 0) + int(count)
+
+    keyword_count = sum(diag_counts.values())
+    kw_pct = round((keyword_count / total_words) * 100, 1) if total_words > 0 else 0.0
+    top_keywords = [
+        {"word": w, "count": c, "category": "DERIVED"}
+        for w, c in sorted(word_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+    ]
+    keyword_analysis = {
+        "total_words": total_words,
+        "diagnostic_keywords": {w: {"count": c, "category": "DERIVED"} for w, c in diag_counts.items()},
+        "keyword_percentage": kw_pct,
+        "top_keywords": top_keywords,
+        "inter_word_frequency": {},
+    }
+
+    # Sentiment from audio summary, falling back to mean window polarity.
+    summary_pol = None
+    if audio_summary:
+        summary_pol = (audio_summary.get("features", {}) or {}).get("avg_sentiment_polarity")
+    if summary_pol is None:
+        pols = [
+            (w.get("features", {}).get("sentiment", {}) or {}).get("polarity")
+            for w in audio_windows
+            if (w.get("features", {}).get("sentiment", {}) or {}).get("polarity") is not None
+        ]
+        summary_pol = _safe_mean(pols)
+    summary_pol = float(summary_pol) if summary_pol is not None else 0.0
+    sentiment_analysis = {
+        "overall_sentiment": "negative" if summary_pol < 0 else ("positive" if summary_pol > 0 else "neutral"),
+        "sentiment_score": round(summary_pol, 3),
+        "distress_level": "high" if summary_pol <= -0.7 else ("medium" if summary_pol < -0.25 else "low"),
+        "emotional_indicators": list(diag_counts.keys())[:5],
+        "analysis_type": "demo_report_jsonl_derived",
+    }
+
+    # Semantic themes from topics + gait + face summaries.
+    topic_rows = (audio_summary or {}).get("features", {}).get("top_topics", []) or []
+    themes = [str(t[0]).replace("_", " ") for t in topic_rows[:5] if isinstance(t, list) and t]
+    if gait_summary:
+        themes.append("gait impairment")
+    if face_summary:
+        themes.append("facial affect profile")
+    semantic_analysis = {
+        "key_themes": list(dict.fromkeys(themes))[:6],
+        "symptom_severity": "moderate",
+        "functional_impact": "moderate",
+        "temporal_patterns": "windowed over visit",
+    }
+
+    physician_notes_parts = []
+    if gait_summary:
+        gs = gait_summary.get("features", {}) or {}
+        physician_notes_parts.append(
+            f"Gait summary: speed {gs.get('avg_speed_mps')} m/s, cadence {gs.get('cadence_spm')} spm, "
+            f"symmetry index {gs.get('symmetry_index')}%, sway RMS {gs.get('trunk_sway_rms')}."
+        )
+    if face_summary:
+        emotion_pct = (face_summary.get("features", {}) or {}).get("emotion_pct", {}) or {}
+        top_emo = sorted(emotion_pct.items(), key=lambda x: x[1], reverse=True)[:2]
+        if top_emo:
+            physician_notes_parts.append("Face summary: " + ", ".join([f"{k} {v}%" for k, v in top_emo]))
+    physician_notes = " ".join(physician_notes_parts).strip()
+
+    return {
+        "ok": True,
+        "visit_id": "demo-report-visit",
+        "patient_id": "demo-report-patient",
+        "chief_complaint": "DemoReport multimodal review",
+        "transcription": transcription,
+        "keyword_analysis": keyword_analysis,
+        "sentiment_analysis": sentiment_analysis,
+        "semantic_analysis": semantic_analysis,
+        "physician_notes": physician_notes,
+        "multimodal_jsonl": {"face": face, "audio": audio, "gait": gait},
+        "gait_summary": gait_summary.get("features", {}) if gait_summary else None,
+    }
 
 
 # ── Demo seed ─────────────────────────────────────────────────────────────────
@@ -1386,6 +1650,22 @@ def delete_visit(visit_id):
     shutil.rmtree(visit_dir, ignore_errors=True)
     print(f"[Visit] Deleted: visit_{visit_id}")
     return jsonify({"success": True})
+
+
+@app.route('/api/demo-report-package', methods=['GET'])
+def demo_report_package():
+    pkg = _build_demo_report_package()
+    if not pkg:
+        return jsonify({"ok": False, "error": "runs/DemoReport not found"}), 404
+    return jsonify(pkg)
+
+
+@app.route('/api/demo-report-derived', methods=['GET'])
+def demo_report_derived():
+    payload = _build_demo_report_derived()
+    if not payload:
+        return jsonify({"ok": False, "error": "runs/DemoReport not found"}), 404
+    return jsonify(payload)
 
 
 # ── Dev utility ───────────────────────────────────────────────────────────────

@@ -84,6 +84,50 @@ function qualLabel(v, low, mid) {
 
 const chartBox = "relative h-[180px] w-full";
 const chartBoxTall = "relative h-[220px] w-full";
+const MAX_GAIT_CHART_POINTS = 25;
+
+function summarizeGaitWindows(windows, maxPoints = MAX_GAIT_CHART_POINTS) {
+  if (!Array.isArray(windows) || windows.length <= maxPoints) return windows || [];
+
+  const bucketSize = windows.length / maxPoints;
+  const summarized = [];
+
+  for (let i = 0; i < maxPoints; i += 1) {
+    const start = Math.floor(i * bucketSize);
+    const end = Math.min(windows.length, Math.floor((i + 1) * bucketSize));
+    const bucket = windows.slice(start, end);
+    if (!bucket.length) continue;
+
+    const mean = (vals) => {
+      const nums = vals.filter((v) => v != null);
+      if (!nums.length) return null;
+      return nums.reduce((a, b) => a + b, 0) / nums.length;
+    };
+
+    summarized.push({
+      t_start: mean(bucket.map((w) => w.t_start)),
+      t_end: mean(bucket.map((w) => w.t_end)),
+      features: {
+        speed_mps: mean(bucket.map((w) => w.features?.speed_mps)),
+        symmetry: mean(bucket.map((w) => w.features?.symmetry)),
+        stability: mean(bucket.map((w) => w.features?.stability)),
+      },
+    });
+  }
+
+  return summarized;
+}
+
+function smoothSeries(values, radius = 1) {
+  if (!Array.isArray(values) || values.length === 0 || radius <= 0) return values || [];
+  return values.map((_, idx) => {
+    const start = Math.max(0, idx - radius);
+    const end = Math.min(values.length, idx + radius + 1);
+    const slice = values.slice(start, end).filter((v) => v != null);
+    if (!slice.length) return null;
+    return slice.reduce((a, b) => a + b, 0) / slice.length;
+  });
+}
 
 function AiDiagnosticAssessmentPanel({ assessment }) {
   const dx = assessment?.suggested_diagnoses;
@@ -204,6 +248,10 @@ export default function ReportSummary() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const visitIdParam = searchParams.get("visitId") || DEMO_REPORT_VISIT_ID;
+  const demoReportMode =
+    String(visitIdParam).toLowerCase() === "demoreport" ||
+    visitIdParam === DEMO_REPORT_VISIT_ID ||
+    visitIdParam === "demo-report-visit";
 
   const { data: loadedVisit } = useQuery({
     queryKey: ["visit", visitIdParam],
@@ -215,9 +263,31 @@ export default function ReportSummary() {
   });
 
   const reportPkg = useMemo(() => getReportDemoPackage(visitIdParam), [visitIdParam]);
-  const face = reportPkg.face;
-  const audio = reportPkg.audio;
-  const gait = reportPkg.gait;
+  const { data: demoReportData } = useQuery({
+    queryKey: ["demo-report-package"],
+    queryFn: async () => {
+      const res = await fetch("http://localhost:5000/api/demo-report-package");
+      if (!res.ok) throw new Error("demo-report-package unavailable");
+      return res.json();
+    },
+    enabled: demoReportMode,
+    retry: false,
+  });
+  const { data: demoReportDerived } = useQuery({
+    queryKey: ["demo-report-derived"],
+    queryFn: async () => {
+      const res = await fetch("http://localhost:5000/api/demo-report-derived");
+      if (!res.ok) throw new Error("demo-report-derived unavailable");
+      return res.json();
+    },
+    enabled: demoReportMode,
+    retry: false,
+  });
+
+  const face = demoReportData?.ok ? demoReportData.face || [] : reportPkg.face;
+  const audio = demoReportData?.ok ? demoReportData.audio || [] : reportPkg.audio;
+  const gait = demoReportData?.ok ? demoReportData.gait || [] : reportPkg.gait;
+  const demoReportWip = demoReportData?.ok ? demoReportData.wip || [] : [];
   const [showFaceRaw, setShowFaceRaw] = useState(false);
   const [showAudioRaw, setShowAudioRaw] = useState(false);
   const [showGaitRaw, setShowGaitRaw] = useState(false);
@@ -244,11 +314,44 @@ export default function ReportSummary() {
   const aiAssessment = useMemo(() => {
     const a = loadedVisit?.ai_assessment;
     if (a && typeof a === "object") return a;
+    if (demoReportDerived?.ok && demoReportDerived.ai_assessment) return demoReportDerived.ai_assessment;
     return reportPkg.aiAssessment;
-  }, [loadedVisit, reportPkg.aiAssessment]);
+  }, [loadedVisit, reportPkg.aiAssessment, demoReportDerived]);
+  const aiAssessmentIsFallback = useMemo(() => {
+    if (!demoReportMode) return false;
+    if (loadedVisit?.ai_assessment && typeof loadedVisit.ai_assessment === "object") return false;
+    if (demoReportDerived?.ok && demoReportDerived.ai_assessment) return false;
+    return true;
+  }, [demoReportMode, loadedVisit, demoReportDerived]);
 
   const { nlpVisit, nlpUsingDemoFallback } = useMemo(() => {
     const demo = reportPkg.transcriptionNlp;
+    if (demoReportMode && demoReportDerived?.ok) {
+      const derivedVisit = {
+        transcription: demoReportDerived.transcription,
+        keyword_analysis: demoReportDerived.keyword_analysis,
+        sentiment_analysis: demoReportDerived.sentiment_analysis,
+        semantic_analysis: demoReportDerived.semantic_analysis,
+        physician_notes: demoReportDerived.physician_notes,
+        ai_comparison: demoReportDerived.ai_comparison,
+      };
+      if (loadedVisit) {
+        return {
+          nlpVisit: {
+            ...derivedVisit,
+            ...loadedVisit,
+            transcription: loadedVisit.transcription || derivedVisit.transcription,
+            keyword_analysis: loadedVisit.keyword_analysis || derivedVisit.keyword_analysis,
+            sentiment_analysis: loadedVisit.sentiment_analysis || derivedVisit.sentiment_analysis,
+            semantic_analysis: loadedVisit.semantic_analysis || derivedVisit.semantic_analysis,
+            physician_notes: loadedVisit.physician_notes || derivedVisit.physician_notes,
+            ai_comparison: loadedVisit.ai_comparison || derivedVisit.ai_comparison,
+          },
+          nlpUsingDemoFallback: false,
+        };
+      }
+      return { nlpVisit: derivedVisit, nlpUsingDemoFallback: false };
+    }
     if (!loadedVisit) {
       return { nlpVisit: demo, nlpUsingDemoFallback: true };
     }
@@ -267,7 +370,7 @@ export default function ReportSummary() {
       };
     }
     return { nlpVisit: loadedVisit, nlpUsingDemoFallback: false };
-  }, [loadedVisit, reportPkg.transcriptionNlp]);
+  }, [loadedVisit, reportPkg.transcriptionNlp, demoReportMode, demoReportDerived]);
 
   const vitalsDisplay = useMemo(() => {
     const v = loadedVisit;
@@ -289,6 +392,11 @@ export default function ReportSummary() {
     }
     return { ...reportPkg.visitSnapshot };
   }, [loadedVisit, reportPkg.visitSnapshot]);
+  const vitalsAreFallback = useMemo(() => {
+    if (!demoReportMode) return false;
+    const v = loadedVisit;
+    return !(v && (v.bp_systolic || v.heart_rate));
+  }, [demoReportMode, loadedVisit]);
 
   const visitMeta = useMemo(() => {
     const allRecs = [...face, ...audio, ...gait];
@@ -308,6 +416,21 @@ export default function ReportSummary() {
     const o = all.length ? all.reduce((x, y) => x + y, 0) / all.length : null;
     return { cf: f, ca: a, cg: g, co: o };
   }, [face, audio, gait]);
+  const sectionWip = useMemo(() => {
+    if (!demoReportMode) return [];
+    const items = [...demoReportWip];
+    if (vitalsAreFallback) {
+      items.push("Vital signs currently use static demo snapshot fallback (not sourced from runs/DemoReport).");
+    }
+    if (aiAssessmentIsFallback) {
+      items.push("AI diagnostic assessment currently uses static demo fallback (run DemoReport AI analysis to replace).");
+    }
+    if (nlpUsingDemoFallback) {
+      items.push("Transcription/NLP panel is using static fallback data.");
+    }
+    items.push("Serial trend analysis route still uses static serial demo timeline, not DemoReport folder data.");
+    return Array.from(new Set(items));
+  }, [demoReportMode, demoReportWip, vitalsAreFallback, aiAssessmentIsFallback, nlpUsingDemoFallback]);
 
   const faceDerived = useMemo(() => {
     if (!face.length) return null;
@@ -388,7 +511,7 @@ export default function ReportSummary() {
     const anyInvalid = audio.some((r) => r.valid === false);
     const sentLabels = windows.map((w) => `${w.t_start}s`);
     const sentData = windows.map((w) => w.features?.sentiment?.polarity ?? 0);
-    const sentColors = sentData.map((v) => (v >= 0 ? "#059669" : "#dc2626"));
+    const pointColors = sentData.map((v) => (v >= 0 ? "#059669" : "#dc2626"));
 
     const kwMap = {};
     const diagSet = new Set();
@@ -428,8 +551,15 @@ export default function ReportSummary() {
           {
             label: "Sentiment polarity",
             data: sentData,
-            backgroundColor: sentColors,
-            borderRadius: 4,
+            borderColor: "#7c3aed",
+            backgroundColor: "rgba(124,58,237,0.1)",
+            pointBackgroundColor: pointColors,
+            pointBorderColor: "#ffffff",
+            pointBorderWidth: 1.5,
+            pointRadius: 4,
+            pointHoverRadius: 5,
+            tension: 0.25,
+            fill: false,
           },
         ],
       },
@@ -481,14 +611,33 @@ export default function ReportSummary() {
 
     const gaitNotes = summary?.notes;
 
+    const chartWindows = summarizeGaitWindows(windows, MAX_GAIT_CHART_POINTS);
+
+    const speedSeries = chartWindows.map((w) => w.features?.speed_mps ?? null);
+    const symmetrySeries = chartWindows.map((w) => w.features?.symmetry ?? null);
+    const stabilitySeries = chartWindows.map((w) => w.features?.stability ?? null);
+
+    const speedSmoothed = smoothSeries(speedSeries, 1);
+    const symmetrySmoothed = smoothSeries(symmetrySeries, 1);
+    const stabilitySmoothed = smoothSeries(stabilitySeries, 1);
+
+    const speedVals = speedSmoothed.filter((v) => v != null);
+    const speedMin = speedVals.length ? Math.min(...speedVals) : null;
+    const speedMax = speedVals.length ? Math.max(...speedVals) : null;
+    const speedRange = speedMin != null && speedMax != null ? speedMax - speedMin : null;
+    const speedPad =
+      speedRange != null
+        ? Math.max(0.2, speedRange * 0.6) // larger pad for smoother-looking visual range
+        : 0.2;
+
     const gaitChart =
       windows.length > 0
         ? {
-            labels: windows.map((w) => `${w.t_start}s`),
+            labels: chartWindows.map((w) => `${(w.t_start ?? 0).toFixed(1)}s`),
             datasets: [
               {
                 label: "Speed (m/s)",
-                data: windows.map((w) => w.features?.speed_mps ?? null),
+                data: speedSmoothed,
                 borderColor: "#047857",
                 backgroundColor: "transparent",
                 tension: 0.3,
@@ -497,7 +646,7 @@ export default function ReportSummary() {
               },
               {
                 label: "Symmetry",
-                data: windows.map((w) => w.features?.symmetry ?? null),
+                data: symmetrySmoothed,
                 borderColor: "#10b981",
                 backgroundColor: "transparent",
                 tension: 0.3,
@@ -507,7 +656,7 @@ export default function ReportSummary() {
               },
               {
                 label: "Stability",
-                data: windows.map((w) => w.features?.stability ?? null),
+                data: stabilitySmoothed,
                 borderColor: "#6ee7b7",
                 backgroundColor: "transparent",
                 tension: 0.3,
@@ -516,6 +665,10 @@ export default function ReportSummary() {
                 pointRadius: 3,
               },
             ],
+            speedAxis: {
+              min: speedMin != null ? Math.max(0, speedMin - speedPad) : undefined,
+              max: speedMax != null ? speedMax + speedPad : undefined,
+            },
           }
         : null;
 
@@ -682,7 +835,7 @@ export default function ReportSummary() {
           >
             <Button variant="outline" className="border-teal-300 text-teal-800 hover:bg-teal-50 w-full sm:w-auto">
               <TrendingUp className="w-4 h-4 mr-2 shrink-0" />
-              Serial Trend Analysis
+              Serial Trend Analysis {demoReportMode ? "(WIP)" : ""}
             </Button>
           </Link>
           <Button
@@ -709,6 +862,25 @@ export default function ReportSummary() {
             Download full report PDF
           </Button>
         </div>
+
+        {sectionWip.length > 0 && (
+          <Card className="border-amber-300 bg-amber-50/80 mb-6">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm text-amber-900">DemoReport import status (WIP)</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {sectionWip.map((msg) => (
+                <div
+                  key={msg}
+                  className="rounded border border-amber-200 bg-white/70 px-3 py-2 text-sm text-amber-900"
+                >
+                  <span className="font-mono text-xs mr-2">WIP</span>
+                  {msg}
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
 
         <div className="flex flex-col lg:flex-row gap-6">
           <aside className="w-full lg:w-72 shrink-0 space-y-4">
@@ -758,7 +930,7 @@ export default function ReportSummary() {
               <CardHeader className="pb-2">
                 <CardTitle className="text-xs font-semibold uppercase tracking-wider text-teal-600 flex items-center gap-2">
                   <Activity className="w-3.5 h-3.5" />
-                  Vital signs
+                  Vital signs {vitalsAreFallback ? "(WIP)" : ""}
                 </CardTitle>
               </CardHeader>
               <CardContent className="text-sm space-y-3">
@@ -889,7 +1061,17 @@ export default function ReportSummary() {
               </button>
             </div>
 
-            {reportTab === "ai" && <AiDiagnosticAssessmentPanel assessment={aiAssessment} />}
+            {reportTab === "ai" && (
+              <div className="space-y-3">
+                {aiAssessmentIsFallback && (
+                  <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                    <span className="font-mono mr-2">WIP</span>
+                    AI diagnostic is currently fallback content, not generated from DemoReport analysis.
+                  </div>
+                )}
+                <AiDiagnosticAssessmentPanel assessment={aiAssessment} />
+              </div>
+            )}
 
             {reportTab === "nlp" && (
               <VisitTranscriptionNlpPanel visit={nlpVisit} usingDemoFallback={nlpUsingDemoFallback} />
@@ -1065,7 +1247,7 @@ export default function ReportSummary() {
                     </CardHeader>
                     <CardContent>
                       <div className={chartBox}>
-                        <Chart type="bar" data={audioDerived.sentiment} options={sentimentOptions} />
+                        <Chart type="line" data={audioDerived.sentiment} options={sentimentOptions} />
                       </div>
                     </CardContent>
                   </Card>
@@ -1274,7 +1456,21 @@ export default function ReportSummary() {
                     </CardHeader>
                     <CardContent>
                       <div className={chartBoxTall}>
-                        <Chart type="line" data={gaitDerived.gaitChart} options={gaitChartOptions} />
+                        <Chart
+                          type="line"
+                          data={gaitDerived.gaitChart}
+                          options={{
+                            ...gaitChartOptions,
+                            scales: {
+                              ...gaitChartOptions.scales,
+                              ySpeed: {
+                                ...gaitChartOptions.scales.ySpeed,
+                                min: gaitDerived.gaitChart?.speedAxis?.min,
+                                max: gaitDerived.gaitChart?.speedAxis?.max,
+                              },
+                            },
+                          }}
+                        />
                       </div>
                     </CardContent>
                   </Card>
